@@ -51,12 +51,12 @@ def load_map(_arbetsplatser, _personer, _db):
         location=[58.2, 13.0],  # Centrerad över VGR
         zoom_start=8,
         min_zoom=7,  # Förhindra för mycket utzoomning
-        max_zoom=13,  # Begränsa max inzoomning
+        max_zoom=18,  # Ökat från 13 till 18 för att tillåta närmare inzoomning
         max_bounds=True,  # Aktivera gränser
-        min_lat=56.0,  # Södra gränsen (tidigare 57.15)
-        max_lat=60.0,  # Norra gränsen (tidigare 59.0)
-        min_lon=10.0,  # Västra gränsen (tidigare 11.0)
-        max_lon=15.5,  # Östra gränsen (tidigare 14.5)
+        min_lat=56.0,  # Södra gränsen
+        max_lat=60.0,  # Norra gränsen
+        min_lon=10.0,  # Västra gränsen
+        max_lon=15.5,  # Östra gränsen
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
     )
 
