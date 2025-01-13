@@ -53,15 +53,15 @@ def load_map(_arbetsplatser, _personer, _db):
         min_zoom=7,  # Förhindra för mycket utzoomning
         max_zoom=13,  # Begränsa max inzoomning
         max_bounds=True,  # Aktivera gränser
-        min_lat=57.15,  # Södra gränsen för VGR
-        max_lat=59.0,  # Norra gränsen för VGR
-        min_lon=11.0,  # Västra gränsen för VGR
-        max_lon=14.5,  # Östra gränsen för VGR
+        min_lat=56.0,  # Södra gränsen (tidigare 57.15)
+        max_lat=60.0,  # Norra gränsen (tidigare 59.0)
+        min_lon=10.0,  # Västra gränsen (tidigare 11.0)
+        max_lon=15.5,  # Östra gränsen (tidigare 14.5)
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
     )
 
     # Sätt gränser för panorering
-    m.fit_bounds([[57.15, 11.0], [59.0, 14.5]])
+    m.fit_bounds([[56.0, 10.0], [60.0, 15.5]])  # Uppdatera också fit_bounds
 
     # Lägg till kommungränser som ett eget lager med clipping
     kommun_layer = folium.FeatureGroup(name="🏛️ Kommuner")
