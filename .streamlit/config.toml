@@ -1,0 +1,6 @@
+[theme]
+base="dark"
+primaryColor="#00A68A"  # Vision grön
+secondaryBackgroundColor="#210061"  # Vision mörkblå
+backgroundColor="#1E1E1E"  # Mörk bakgrund
+textColor="#EFE9E5"  # Vision beige 
