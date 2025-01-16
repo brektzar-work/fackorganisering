@@ -372,7 +372,7 @@ def show(db):
             # Filtrera enheter för den aktuella förvaltningen
             forv_enheter = len([e for e in enheter if e['forvaltning_namn'] == forv['namn']])
 
-            col1, col2, col3 = st.columns([2, 2, 2], gap="medium")
+            col1, col2, col3 = st.columns([2, 2, 2], gap="medium", border=True)
 
             with col1:
                 st.write(f"Förvaltning: {forv['namn']}, Antal enheter: {forv_enheter}")
@@ -394,6 +394,8 @@ def show(db):
 
                 with col3:
                     st.write(f"Skydd täckning: {skydd_coverage:.1f}%")
+
+                st.divider()
 
                 # Lägg till resultat i listan
                 forv_coverage.append({
