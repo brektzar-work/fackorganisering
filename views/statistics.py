@@ -369,7 +369,7 @@ def show(db):
         forv_coverage = []
         for forv in forvaltningar:
 
-            col1, col2, col3 = st.columns(2, 2, 2)
+            col1, col2, col3 = st.columns([2, 2, 2], border=True)
 
             with col1:
                 forv_enheter = len(enheter)
