@@ -17,7 +17,7 @@ def create_excel_file(db):
         })
         
         forvaltning_format = workbook.add_format({
-            'bg_color': '#bc98d7',
+            'bg_color': '#00A68A',
             'border': 1
         })
         
