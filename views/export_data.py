@@ -17,22 +17,22 @@ def create_excel_file(db):
         })
         
         forvaltning_format = workbook.add_format({
-            'bg_color': '#cce5ff',  # Basfärg för förvaltning
+            'bg_color': '#00A68A',
             'border': 1
         })
         
         avdelning_format = workbook.add_format({
-            'bg_color': '#e6f2ff',  # Ljusare för avdelning
+            'bg_color': '#7930AE',
             'border': 1
         })
         
         enhet_format = workbook.add_format({
-            'bg_color': '#f2f8ff',  # Ännu ljusare för enhet
+            'bg_color': '#af83ce',
             'border': 1
         })
         
         person_format = workbook.add_format({
-            'bg_color': '#ffffff',  # Vit för personer
+            'bg_color': '#e4d6ef',
             'border': 1
         })
         
