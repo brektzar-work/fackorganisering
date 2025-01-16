@@ -395,8 +395,6 @@ def show(db):
                 with col3:
                     st.write(f"Skydd täckning: {skydd_coverage:.1f}%")
 
-                st.divider()
-
                 # Lägg till resultat i listan
                 forv_coverage.append({
                     'Förvaltning': forv['namn'],
@@ -408,6 +406,8 @@ def show(db):
                     st.write("Inga enheter.")
                 with col3:
                     st.write("Inga ombud.")
+                    
+        st.divider()
 
         # Graf 1: Täckningsgrad per förvaltning
         st.markdown("### Täckningsgrad per förvaltning")
