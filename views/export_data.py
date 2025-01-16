@@ -17,17 +17,17 @@ def create_excel_file(db):
         })
         
         forvaltning_format = workbook.add_format({
-            'bg_color': '#00A68A',
+            'bg_color': '#bc98d7',
             'border': 1
         })
         
         avdelning_format = workbook.add_format({
-            'bg_color': '#7930AE',
+            'bg_color': '#c9acdf',
             'border': 1
         })
         
         enhet_format = workbook.add_format({
-            'bg_color': '#af83ce',
+            'bg_color': '#d7c1e7',
             'border': 1
         })
         
