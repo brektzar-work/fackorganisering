@@ -358,9 +358,6 @@ def show(db):
     with tab2:
         st.subheader("Detaljerade analyser")
 
-        # Graf 1: Täckningsgrad per förvaltning
-        st.markdown("### Täckningsgrad per förvaltning")
-
         # Debug information
         st.write(f"Antal förvaltningar: {len(forvaltningar)}")
 
@@ -372,27 +369,36 @@ def show(db):
         forv_coverage = []
         for forv in forvaltningar:
 
-            forv_enheter = len(enheter)
-            st.write(f"Förvaltning: {forv['namn']}, Antal enheter: {forv_enheter}")
+            col1, col2, col3 = st.columns(3)
 
+            with col1:
+                forv_enheter = len(enheter)
+                st.write(f"Förvaltning: {forv['namn']}, Antal enheter: {forv_enheter}")
+            
             if forv_enheter > 0:
-                vision_coverage = len(set(
-                    p['enhet_id'] for p in personer
-                    if p.get('visionombud') and p['forvaltning_namn'] == forv["namn"]
-                )) / forv_enheter * 100
 
-                skydd_coverage = len(set(
-                    p['enhet_id'] for p in personer
-                    if p.get('skyddsombud') and p['forvaltning_namn'] == forv["namn"]
-                )) / forv_enheter * 100
+                with col2:
+                    vision_coverage = len(set(
+                        p['enhet_id'] for p in personer
+                        if p.get('visionombud') and p['forvaltning_namn'] == forv["namn"]
+                    )) / forv_enheter * 100
 
-                st.write(f"Vision täckning: {vision_coverage:.1f}%, Skydd täckning: {skydd_coverage:.1f}%")
+                with col3:
+                    skydd_coverage = len(set(
+                        p['enhet_id'] for p in personer
+                        if p.get('skyddsombud') and p['forvaltning_namn'] == forv["namn"]
+                    )) / forv_enheter * 100
+
+                    st.write(f"Vision täckning: {vision_coverage:.1f}%, Skydd täckning: {skydd_coverage:.1f}%")
 
                 forv_coverage.append({
                     'Förvaltning': forv['namn'],
                     'Visionombud': vision_coverage,
                     'Skyddsombud': skydd_coverage
                 })
+
+        # Graf 1: Täckningsgrad per förvaltning
+        st.markdown("### Täckningsgrad per förvaltning")
 
         if forv_coverage:  # Kontrollera att vi har data
             coverage_df = pd.DataFrame(forv_coverage)
