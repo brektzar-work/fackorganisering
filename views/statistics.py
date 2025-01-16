@@ -368,19 +368,9 @@ def show(db):
         alla_enheter = list(db.enheter.find())
         st.write(f"Totalt antal enheter i databasen: {len(alla_enheter)}")
 
-        # Visa några exempel på enheter för att se strukturen
-        if alla_enheter:
-            st.write("Exempel på en enhet:", alla_enheter[0])
-
         # Beräkna täckningsgrad per förvaltning
         forv_coverage = []
         for forv in forvaltningar:
-            st.write(f"\nDebugging förvaltning: {forv['namn']}")
-            st.write(f"Förvaltning ID: {forv['_id']}")
-
-            # Visa alla enheter för denna förvaltning
-            enheter = list(db.enheter.find({"forvaltning_namn": forv["namn"]}))
-            st.write("Första enheten (om den finns):", enheter[0] if enheter else "Inga enheter hittades")
 
             forv_enheter = len(enheter)
             st.write(f"Förvaltning: {forv['namn']}, Antal enheter: {forv_enheter}")
