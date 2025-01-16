@@ -406,7 +406,7 @@ def show(db):
                     st.write("Inga enheter.")
                 with col3:
                     st.write("Inga ombud.")
-                    
+
         st.divider()
 
         # Graf 1: Täckningsgrad per förvaltning
@@ -440,7 +440,7 @@ def show(db):
             'Huvudskyddsombud': len([p for p in personer if p.get('huvudskyddsombud')]),
             'CSG': len([p for p in personer if p.get('csg')]),
             'LSG/FSG': len([p for p in personer if p.get('lsg_fsg')]),
-            'Annat fack': len([p for p in personer if p.get('annat_fack')])
+            'Medlemmar': 895,
         }
 
         fig_roles = px.pie(
