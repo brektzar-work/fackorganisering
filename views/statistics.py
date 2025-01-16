@@ -369,33 +369,43 @@ def show(db):
         forv_coverage = []
         for forv in forvaltningar:
 
-            col1, col2, col3 = st.columns([2, 2, 2], border=True)
+            # Filtrera enheter för den aktuella förvaltningen
+            forv_enheter = len([e for e in enheter if e['forvaltning_namn'] == forv['namn']])
+
+            col1, col2, col3 = st.columns([2, 2, 2], gap="medium")
 
             with col1:
-                forv_enheter = len(enheter)
                 st.write(f"Förvaltning: {forv['namn']}, Antal enheter: {forv_enheter}")
-            
+
             if forv_enheter > 0:
+                # Beräkna täckningsgrader
+                vision_coverage = len(set(
+                    p['enhet_id'] for p in personer
+                    if p.get('visionombud') and p['forvaltning_namn'] == forv["namn"]
+                )) / forv_enheter * 100
+
+                skydd_coverage = len(set(
+                    p['enhet_id'] for p in personer
+                    if p.get('skyddsombud') and p['forvaltning_namn'] == forv["namn"]
+                )) / forv_enheter * 100
 
                 with col2:
-                    vision_coverage = len(set(
-                        p['enhet_id'] for p in personer
-                        if p.get('visionombud') and p['forvaltning_namn'] == forv["namn"]
-                    )) / forv_enheter * 100
+                    st.write(f"Vision täckning: {vision_coverage:.1f}%")
 
                 with col3:
-                    skydd_coverage = len(set(
-                        p['enhet_id'] for p in personer
-                        if p.get('skyddsombud') and p['forvaltning_namn'] == forv["namn"]
-                    )) / forv_enheter * 100
+                    st.write(f"Skydd täckning: {skydd_coverage:.1f}%")
 
-                    st.write(f"Vision täckning: {vision_coverage:.1f}%, Skydd täckning: {skydd_coverage:.1f}%")
-
+                # Lägg till resultat i listan
                 forv_coverage.append({
                     'Förvaltning': forv['namn'],
                     'Visionombud': vision_coverage,
                     'Skyddsombud': skydd_coverage
                 })
+            else:
+                with col2:
+                    st.write("Inga enheter.")
+                with col3:
+                    st.write("Inga ombud.")
 
         # Graf 1: Täckningsgrad per förvaltning
         st.markdown("### Täckningsgrad per förvaltning")
