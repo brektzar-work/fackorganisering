@@ -9,3 +9,4 @@ bcrypt
 jwt
 xlsxwriter
 pytz
+streamlit_nested_layout
