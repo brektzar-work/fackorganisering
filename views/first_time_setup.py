@@ -47,7 +47,7 @@ def show_first_time_setup(db):
                     "username": username,
                     "password": hash_password(password),
                     "role": "admin",
-                    "created_at": current_time,
+                    "created_at": current_time(),
                     "last_login": None,
                     "failed_login_attempts": 0,
                     "last_failed_login": None,
