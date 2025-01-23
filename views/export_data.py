@@ -1,14 +1,50 @@
+"""
+Excel-exportmodul för Vision Sektion 10
+Detta system hanterar export av organisationsdata till Excel-format.
+Modulen skapar en detaljerad Excel-fil med flera flikar som innehåller
+organisationsstruktur, arbetsplatser och styrelser/nämnder.
+
+Tekniska detaljer:
+- Använder xlsxwriter för Excel-generering
+- Stödjer avancerad formatering och styling
+- Hanterar hierarkisk datastruktur
+- Optimerar kolumnbredder automatiskt
+"""
+
 import streamlit as st
 import pandas as pd
 from io import BytesIO
 import datetime
 
+
 def create_excel_file(db):
+    """
+    Skapar en komplett Excel-fil med organisationsdata från databasen.
+    
+    Funktionen:
+    1. Skapar en Excel-fil i minnet med flera flikar
+    2. Applicerar anpassad formatering för olika organisationsnivåer
+    3. Genererar hierarkisk data för hela organisationen
+    4. Skapar separata flikar för arbetsplatser och styrelser/nämnder
+    
+    Args:
+        db: MongoDB-databasanslutning med tillgång till alla collections
+    
+    Returns:
+        bytes: Excel-filens innehåll som bytes för nedladdning
+    
+    Tekniska detaljer:
+    - Använder BytesIO för minneshantering
+    - Implementerar anpassade format för varje organisationsnivå
+    - Optimerar kolumnbredder baserat på innehåll
+    - Hanterar relationer mellan olika collections
+    """
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         workbook = writer.book
         
-        # Formatering för olika nivåer
+        # Formatering för olika organisationsnivåer
+        # Vision-blå (#210061) för rubriker
         header_format = workbook.add_format({
             'bold': True,
             'bg_color': '#210061',
@@ -16,27 +52,35 @@ def create_excel_file(db):
             'border': 1
         })
         
+        # Vision-grön (#00A68A) för förvaltningar
         forvaltning_format = workbook.add_format({
+            'bold': True,
             'bg_color': '#00A68A',
-            'border': 1
+            'border': 6
         })
         
+        # Vision-lila (#7930AE) för avdelningar
         avdelning_format = workbook.add_format({
-            'bg_color': '#c9acdf',
+            'bold': True,
+            'bg_color': '#7930AE',
+            'font_color': 'white',
             'border': 1
         })
         
+        # Ljuslila (#bc98d7) för enheter
         enhet_format = workbook.add_format({
-            'bg_color': '#d7c1e7',
+            'bold': True,
+            'bg_color': '#bc98d7',
             'border': 1
         })
         
+        # Mycket ljuslila (#f2eaf7) för personal
         person_format = workbook.add_format({
-            'bg_color': '#e4d6ef',
+            'bg_color': '#f2eaf7',
             'border': 1
         })
         
-        # Hämta all data
+        # Hämta all nödvändig data från databasen
         forvaltningar = list(db.forvaltningar.find())
         avdelningar = list(db.avdelningar.find())
         enheter = list(db.enheter.find())
@@ -44,13 +88,13 @@ def create_excel_file(db):
         arbetsplatser = list(db.arbetsplatser.find())
         boards = list(db.boards.find())
 
-        # Skapa hierarkisk översikt
+        # Skapa hierarkisk datastruktur
         hierarkisk_data = []
-        row_formats = []  # Lista för att hålla reda på formateringen för varje rad
+        row_formats = []  # Lista för radspecifik formatering
         
-        # Lägg till förvaltningar och deras nämnder
+        # Bygg hierarkin: Förvaltning -> Nämnd -> Avdelning -> Enhet -> Personal
         for forv in forvaltningar:
-            # Lägg till förvaltning
+            # Lägg till förvaltningsnivå
             hierarkisk_data.append({
                 'Nivå': 'Förvaltning',
                 'Namn': forv['namn'],
@@ -68,7 +112,7 @@ def create_excel_file(db):
             })
             row_formats.append(forvaltning_format)
             
-            # Lägg till nämnder för denna förvaltning
+            # Identifiera och lägg till nämnder kopplade till förvaltningen
             forv_boards = [b for b in boards if any(
                 person['forvaltning_id'] == forv['_id'] 
                 for person in personer 
@@ -76,7 +120,7 @@ def create_excel_file(db):
             )]
             
             for board in forv_boards:
-                # Filtrera ledamöter och ersättare för denna förvaltning
+                # Filtrera ledamöter och ersättare för aktuell förvaltning
                 forv_ledamoter = [
                     person['namn'] for person in personer 
                     if person['forvaltning_id'] == forv['_id'] 
@@ -105,11 +149,11 @@ def create_excel_file(db):
                         'Ersättare': ', '.join(forv_ersattare)
                     })
                     row_formats.append(workbook.add_format({
-                        'bg_color': '#d9ebff',  # Ljusblå för nämnder
-                        'border': 1
+                        'bg_color': '#EFE9E5',  # Ljusgrå för nämnder
+                        'border': 9
                     }))
             
-            # Lägg till avdelningar
+            # Lägg till avdelningar under förvaltningen
             forv_avd = [a for a in avdelningar if a['forvaltning_id'] == forv['_id']]
             for avd in forv_avd:
                 hierarkisk_data.append({
@@ -129,7 +173,7 @@ def create_excel_file(db):
                 })
                 row_formats.append(avdelning_format)
                 
-                # Lägg till enheter
+                # Lägg till enheter under avdelningen
                 avd_enh = [e for e in enheter if e['avdelning_id'] == avd['_id']]
                 for enh in avd_enh:
                     hierarkisk_data.append({
@@ -149,7 +193,7 @@ def create_excel_file(db):
                     })
                     row_formats.append(enhet_format)
                     
-                    # Lägg till personer
+                    # Lägg till personal under enheten
                     enh_personer = [p for p in personer if p['enhet_id'] == enh['_id']]
                     for person in enh_personer:
                         hierarkisk_data.append({
@@ -169,33 +213,31 @@ def create_excel_file(db):
                         })
                         row_formats.append(person_format)
 
-        # Skapa DataFrame och skriv till Excel
+        # Skapa och formatera organisationsfliken
         df_hierarki = pd.DataFrame(hierarkisk_data)
         df_hierarki.to_excel(writer, sheet_name='Organisation', index=False)
-        
-        # Formatera Organisation-fliken
         worksheet = writer.sheets['Organisation']
         
-        # Sätt kolumnbredder
+        # Optimera kolumnbredder baserat på innehåll
         for idx, col in enumerate(df_hierarki.columns):
-            worksheet.set_column(idx, idx, max(len(col) + 2, df_hierarki[col].astype(str).str.len().max() + 2))
+            max_length = max(len(col) + 2, df_hierarki[col].astype(str).str.len().max() + 2)
+            worksheet.set_column(idx, idx, max_length)
         
-        # Lägg till headers med formatering
+        # Applicera rubrikformatering
         for col_num, value in enumerate(df_hierarki.columns.values):
             worksheet.write(0, col_num, value, header_format)
         
-        # Applicera rad-formatering
+        # Applicera radspecifik formatering
         for row_num, format in enumerate(row_formats, start=1):
             for col_num in range(len(df_hierarki.columns)):
                 cell_value = df_hierarki.iloc[row_num-1, col_num]
-                # Konvertera värdet till sträng och hantera NaN/None
                 if pd.isna(cell_value):
                     cell_value = ''
                 else:
                     cell_value = str(cell_value)
                 worksheet.write(row_num, col_num, cell_value, format)
 
-        # Skapa flik för arbetsplatser
+        # Skapa och formatera arbetsplatsfliken
         arbetsplats_data = [{
             'Arbetsplats': ap['namn'],
             'Förvaltning': next((f['namn'] for f in forvaltningar 
@@ -203,66 +245,82 @@ def create_excel_file(db):
         } for ap in arbetsplatser]
         
         df_arbetsplatser = pd.DataFrame(arbetsplats_data)
-        df_arbetsplatser = df_arbetsplatser.fillna('')  # Ersätt NaN med tomma strängar
+        df_arbetsplatser = df_arbetsplatser.fillna('')
         df_arbetsplatser.to_excel(writer, sheet_name='Arbetsplatser', index=False)
         
-        # Formatera Arbetsplatser-fliken
+        # Formatera arbetsplatsfliken
         worksheet = writer.sheets['Arbetsplatser']
         for idx, col in enumerate(df_arbetsplatser.columns):
-            worksheet.set_column(idx, idx, max(len(col) + 2, df_arbetsplatser[col].astype(str).str.len().max() + 2))
+            max_length = max(len(col) + 2, df_arbetsplatser[col].astype(str).str.len().max() + 2)
+            worksheet.set_column(idx, idx, max_length)
         
-        # Lägg till headers med formatering
         for col_num, value in enumerate(df_arbetsplatser.columns.values):
             worksheet.write(0, col_num, value, header_format)
 
-        # Skapa flik för styrelser/nämnder
-        boards_data = []
-        for board in boards:
-            boards_data.append({
-                'Styrelse/Nämnd': board['namn'],
-                'Ordinarie': ', '.join(board.get('ledamoter', [])),
-                'Ersättare': ', '.join(board.get('ersattare', []))
-            })
+        # Skapa och formatera styrelser/nämnder-fliken
+        boards_data = [{
+            'Styrelse/Nämnd': board['namn'],
+            'Ordinarie': ', '.join(board.get('ledamoter', [])),
+            'Ersättare': ', '.join(board.get('ersattare', []))
+        } for board in boards]
         
         df_boards = pd.DataFrame(boards_data)
         df_boards.to_excel(writer, sheet_name='Styrelser & Nämnder', index=False)
         
-        # Formatera Styrelser & Nämnder-fliken
+        # Formatera styrelser/nämnder-fliken
         worksheet = writer.sheets['Styrelser & Nämnder']
         for idx, col in enumerate(df_boards.columns):
-            worksheet.set_column(idx, idx, max(len(col) + 2, df_boards[col].astype(str).str.len().max() + 2))
+            max_length = max(len(col) + 2, df_boards[col].astype(str).str.len().max() + 2)
+            worksheet.set_column(idx, idx, max_length)
             
-        # Lägg till headers med formatering
         for col_num, value in enumerate(df_boards.columns.values):
             worksheet.write(0, col_num, value, header_format)
 
     return output.getvalue()
 
+
 def show(db):
+    """
+    Visar exportgränssnittet i Streamlit och hanterar nedladdning av Excel-filen.
+    
+    Funktionen:
+    1. Visar en beskrivande header och information om exporten
+    2. Skapar en nedladdningsknapp för Excel-filen
+    3. Genererar filnamn med aktuellt datum
+    
+    Args:
+        db: MongoDB-databasanslutning
+    
+    Tekniska detaljer:
+    - Använder Streamlit's nedladdningsfunktionalitet
+    - Genererar dynamiskt filnamn med datum
+    - Hanterar MIME-type för Excel-filer
+    """
     st.header("Exportera Data")
     
     st.markdown("""
     Här kan du exportera all data till en Excel-fil. Filen innehåller:
     - Komplett organisationsstruktur med alla personer och deras roller
-    - Översikt över styrelser och nämnder med representanter
+    - Lista över alla arbetsplatser och deras förvaltningar
+    - Översikt över styrelser och nämnder med ledamöter
     
-    Organisationsfliken visar:
-    - Hierarkisk struktur (Förvaltning → Avdelning → Enhet → Personal)
-    - Alla roller och uppdrag för varje person
-    - Kontaktinformation och arbetsplatser
+    Filen kommer att innehålla följande flikar:
+    1. **Organisation** - Hierarkisk vy av hela organisationen
+    2. **Arbetsplatser** - Lista över alla arbetsplatser
+    3. **Styrelser & Nämnder** - Översikt över alla styrelser och nämnder
     """)
     
-    if st.button("📥 Ladda ner Excel-fil"):
+    # Skapa nedladdningsknapp
+    if st.button("📥 Generera Excel-fil"):
         excel_data = create_excel_file(db)
-        
         current_date = datetime.datetime.now().strftime("%Y-%m-%d")
-        filename = f"Vision_Organisation_{current_date}.xlsx"
+        filename = f"Vision_Export_{current_date}.xlsx"
         
         st.download_button(
-            label="📎 Klicka här för att ladda ner",
+            label="⬇️ Ladda ner Excel-fil",
             data=excel_data,
             file_name=filename,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
         
-        st.success("Excel-filen är klar för nedladdning!") 
+        st.success("✅ Excel-fil genererad! Klicka på knappen ovan för att ladda ner.")

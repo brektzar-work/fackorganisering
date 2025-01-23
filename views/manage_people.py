@@ -1,10 +1,22 @@
+"""Hanteringsmodul för Personer i Vision Sektion 10.
+
+Detta system hanterar administration av personer inom organisationen.
+Inkluderar registrering och hantering av medlemmar, roller och organisationstillhörighet.
+"""
+
 import streamlit as st
+from views.custom_logging import log_action, current_time
 
 
 def show(db):
+    """Visar och hanterar gränssnittet för administration av personer.
+
+    Args:
+        db: MongoDB-databasanslutning för personer och organisationsdata.
+    """
     st.header("Hantera Personer")
 
-    # Initiera session state om det behövs
+    # Initiera session state
     if 'ny_arbetsplats' not in st.session_state:
         st.session_state.ny_arbetsplats = False
     if 'redigering_forvaltning' not in st.session_state:
@@ -12,10 +24,9 @@ def show(db):
     if 'redigering_avdelning' not in st.session_state:
         st.session_state.redigering_avdelning = {}
 
-    # Hämta alla förvaltningar
+    # Hierarkisk navigering genom organisationen
     forvaltningar = list(db.forvaltningar.find())
 
-    # Dropdown för förvaltning (utanför formuläret)
     if forvaltningar:
         forv_namn = st.selectbox(
             "Välj Förvaltning",
@@ -24,7 +35,7 @@ def show(db):
         )
         vald_forvaltning = next(f for f in forvaltningar if f["namn"] == forv_namn)
 
-        # Filtrera avdelningar baserat på vald förvaltning
+        # Visa avdelningar för vald förvaltning
         avdelningar = list(db.avdelningar.find({"forvaltning_id": vald_forvaltning["_id"]}))
         if avdelningar:
             avd_namn = st.selectbox(
@@ -34,7 +45,7 @@ def show(db):
             )
             vald_avdelning = next(a for a in avdelningar if a["namn"] == avd_namn)
 
-            # Filtrera enheter baserat på vald avdelning
+            # Visa enheter för vald avdelning
             enheter = list(db.enheter.find({"avdelning_id": vald_avdelning["_id"]}))
             if enheter:
                 enh_namn = st.selectbox(
@@ -56,21 +67,28 @@ def show(db):
         vald_avdelning = None
         vald_enhet = None
 
-    # Lägg till ny person
+    # Formulär för att lägga till ny person
     with st.expander("**Lägg till Person**"):
-        # Hämta alla unika arbetsplatser från databasen
+        # Hämta befintliga arbetsplatser för autokomplettering
         alla_arbetsplatser = sorted(list(set(
             arbetsplats for person in db.personer.find()
             if person.get('arbetsplats')
             for arbetsplats in person['arbetsplats']
         )))
 
-        # Form för att lägga till person
         with st.form("person_form"):
+            # Grundläggande personuppgifter
             namn = st.text_input("Namn")
             yrkestitel = st.text_input("Yrkestitel")
+            
+            # Kontaktinformation
+            col1, col2 = st.columns(2)
+            with col1:
+                telefon = st.text_input("Telefon (valfritt)")
+            with col2:
+                email = st.text_input("E-post (valfritt)")
 
-            # Hämta arbetsplatser baserat på vald förvaltning
+            # Arbetsplatsval med filtrering
             if vald_forvaltning:
                 arbetsplatser = list(db.arbetsplatser.find({
                     "$or": [
@@ -86,18 +104,16 @@ def show(db):
                         help="Välj en eller flera arbetsplatser"
                     )
                 else:
-                    st.warning("Inga arbetsplatser finns för den valda förvaltningen. Lägg till arbetsplatser först.")
+                    st.warning("Inga arbetsplatser finns för den valda förvaltningen")
                     arbetsplats = []
             else:
-                st.warning("Välj en förvaltning först för att se tillgängliga arbetsplatser")
+                st.warning("Välj en förvaltning först")
                 arbetsplats = []
 
-            telefon = st.text_input("Telefon")
-
-            # Checkboxar och val för olika roller
+            # Roller och uppdrag
             col1, col2, col3 = st.columns(3)
             with col1:
-                # CSG
+                # CSG (Central Samverkansgrupp)
                 st.write("**CSG**")
                 csg = st.checkbox("Sitter i CSG")
                 if csg:
@@ -107,7 +123,7 @@ def show(db):
                         key="csg_roll"
                     )
 
-                # LSG/FSG
+                # LSG/FSG (Lokal/Förvaltnings Samverkansgrupp)
                 st.write("**LSG/FSG**")
                 lsg_fsg = st.checkbox("Sitter i LSG/FSG")
                 if lsg_fsg:
@@ -124,6 +140,7 @@ def show(db):
             with col3:
                 annat_fack = st.checkbox("Medlem i annat fack")
 
+            # Hantera formulärinlämning
             submitted = st.form_submit_button("Spara Person")
 
             if submitted:
@@ -132,7 +149,7 @@ def show(db):
                     return
 
                 if vald_forvaltning and vald_avdelning and vald_enhet:
-                    # Skapa person-dokument
+                    # Skapa persondokument
                     person = {
                         "namn": namn,
                         "yrkestitel": yrkestitel,
@@ -144,6 +161,7 @@ def show(db):
                         "enhet_namn": vald_enhet["namn"],
                         "arbetsplats": arbetsplats,
                         "telefon": telefon,
+                        "email": email,
                         "csg": csg,
                         "csg_roll": csg_roll if csg else None,
                         "lsg_fsg": lsg_fsg,
@@ -154,32 +172,42 @@ def show(db):
                         "annat_fack": annat_fack
                     }
 
-                    # Spara till databasen
-                    db.personer.insert_one(person)
-                    st.success("Person sparad!")
-                    st.session_state.ny_arbetsplats = False  # Återställ efter sparande
-                    st.rerun()
+                    # Spara och logga
+                    result = db.personer.insert_one(person)
+                    if result.inserted_id:
+                        contact_info = []
+                        if telefon:
+                            contact_info.append(f"telefon: {telefon}")
+                        if email:
+                            contact_info.append(f"e-post: {email}")
+                        contact_str = f" med {' och '.join(contact_info)}" if contact_info else ""
+                        log_action("create", f"Skapade person: {namn}{contact_str}", "person")
+                        st.success("Person sparad!")
+                        st.session_state.ny_arbetsplats = False
+                        st.rerun()
+                    else:
+                        st.error("Något gick fel när personen skulle sparas")
                 else:
                     st.error("Kontrollera att förvaltning, avdelning och enhet är valda")
 
     st.divider()
 
-    # Lista och redigera befintliga personer
+    # Visa och redigera befintliga personer
     st.subheader("Befintliga Personer")
 
-    # Dropdown för att välja förvaltning att visa
+    # Välj förvaltning att visa
     forvaltningar = list(db.forvaltningar.find())
     vald_visningsforvaltning = st.selectbox(
         "Välj förvaltning att visa",
         options=[f["namn"] for f in forvaltningar],
         key="visa_forvaltning"
     )
-    
-    # Hämta alla personer för vald förvaltning
+
+    # Hämta personer för vald förvaltning
     vald_forv = next(f for f in forvaltningar if f["namn"] == vald_visningsforvaltning)
     alla_personer = list(db.personer.find({"forvaltning_id": vald_forv["_id"]}))
-    
-    # Initiera session state för alla personer
+
+    # Initiera session state för organisationstillhörighet
     for person in alla_personer:
         person_id = str(person['_id'])
         if f"forv_{person_id}" not in st.session_state:
@@ -188,8 +216,8 @@ def show(db):
             st.session_state[f"avd_{person_id}"] = person["avdelning_id"]
         if f"enh_{person_id}" not in st.session_state:
             st.session_state[f"enh_{person_id}"] = person["enhet_id"]
-    
-    # Skapa hierarkisk struktur
+
+    # Skapa hierarkisk struktur för visning
     hierarki = {}
     for person in alla_personer:
         avd_namn = person['avdelning_namn']
@@ -202,11 +230,10 @@ def show(db):
             
         hierarki[avd_namn][enh_namn].append(person)
 
-    # Visa personer i hierarkisk struktur
+    # Visa personer hierarkiskt
     for avd_namn, enheter in sorted(hierarki.items()):
         st.markdown(f"### {avd_namn}")
         
-        # Konvertera till lista för att kunna kolla sista enheten
         sorterade_enheter = list(sorted(enheter.items()))
         for i, (enh_namn, personer) in enumerate(sorterade_enheter):
             st.markdown(f"#### &nbsp;&nbsp;&nbsp;&nbsp;{enh_namn}")
@@ -214,7 +241,7 @@ def show(db):
             for person in sorted(personer, key=lambda x: x['namn']):
                 person_id = str(person['_id'])
                 with st.expander(f"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;{person['namn']} - {person['yrkestitel']}"):
-                    # Dropdowns utanför formuläret
+                    # Organisationstillhörighet
                     alla_forvaltningar = list(db.forvaltningar.find())
                     forv_index = next((i for i, f in enumerate(alla_forvaltningar)
                                        if f["_id"] == st.session_state[f"forv_{person['_id']}"]), 0)
@@ -228,7 +255,7 @@ def show(db):
                     vald_forv = next(f for f in alla_forvaltningar if f["namn"] == ny_forv)
                     st.session_state[f"forv_{person['_id']}"] = vald_forv["_id"]
 
-                    # Avdelning dropdown
+                    # Avdelningar för vald förvaltning
                     avd_for_forv = list(db.avdelningar.find({"forvaltning_id": vald_forv["_id"]}))
                     if avd_for_forv:
                         try:
@@ -246,7 +273,7 @@ def show(db):
                         vald_avd = next(a for a in avd_for_forv if a["namn"] == ny_avd)
                         st.session_state[f"avd_{person['_id']}"] = vald_avd["_id"]
 
-                        # Enhet dropdown
+                        # Enheter för vald avdelning
                         enh_for_avd = list(db.enheter.find({"avdelning_id": vald_avd["_id"]}))
                         if enh_for_avd:
                             try:
@@ -271,12 +298,19 @@ def show(db):
                         vald_avd = None
                         vald_enh = None
 
-                    # Formulär för övrig information
+                    # Redigeringsformulär
                     with st.form(f"edit_person_{person['_id']}"):
                         nytt_namn = st.text_input("Namn", value=person["namn"])
                         ny_yrkestitel = st.text_input("Yrkestitel", value=person["yrkestitel"])
+                        
+                        # Kontaktinformation
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            nytt_telefon = st.text_input("Telefon (valfritt)", value=person.get("telefon", ""))
+                        with col2:
+                            ny_email = st.text_input("E-post (valfritt)", value=person.get("email", ""))
 
-                        # Välj arbetsplats
+                        # Arbetsplatsval
                         arbetsplatser = list(db.arbetsplatser.find({
                             "$or": [
                                 {"forvaltning_id": person["forvaltning_id"]},
@@ -290,9 +324,7 @@ def show(db):
                             help="Välj en eller flera arbetsplatser"
                         )
 
-                        nytt_telefon = st.text_input("Telefon", value=person.get("telefon", ""))
-
-                        # Checkboxar och val för olika roller
+                        # Roller och uppdrag
                         col1, col2, col3 = st.columns(3)
                         with col1:
                             # CSG
@@ -328,10 +360,22 @@ def show(db):
                             nytt_annat_fack = st.checkbox("Medlem i annat fack",
                                                           value=person.get("annat_fack", False))
 
+                        # Spara eller ta bort
                         col1, col2 = st.columns(2)
                         with col1:
                             if st.form_submit_button("Spara ändringar"):
-                                # Uppdatera person med de senaste värdena från session state
+                                # Identifiera ändringar
+                                changes = []
+                                if nytt_namn != person["namn"]:
+                                    changes.append(f"namn från '{person['namn']}' till '{nytt_namn}'")
+                                if ny_yrkestitel != person["yrkestitel"]:
+                                    changes.append(f"yrkestitel från '{person['yrkestitel']}' till '{ny_yrkestitel}'")
+                                if nytt_telefon != person.get("telefon", ""):
+                                    changes.append(f"telefon från '{person.get('telefon', '')}' till '{nytt_telefon}'")
+                                if ny_email != person.get("email", ""):
+                                    changes.append(f"e-post från '{person.get('email', '')}' till '{ny_email}'")
+                                
+                                # Uppdatera person
                                 uppdaterad_person = {
                                     "namn": nytt_namn,
                                     "yrkestitel": ny_yrkestitel,
@@ -343,6 +387,7 @@ def show(db):
                                     "enhet_namn": vald_enh["namn"],
                                     "arbetsplats": ny_arbetsplats,
                                     "telefon": nytt_telefon,
+                                    "email": ny_email,
                                     "csg": ny_csg,
                                     "csg_roll": ny_csg_roll if ny_csg else None,
                                     "lsg_fsg": ny_lsg_fsg,
@@ -353,18 +398,28 @@ def show(db):
                                     "annat_fack": nytt_annat_fack
                                 }
 
-                                db.personer.update_one(
+                                # Spara och logga
+                                result = db.personer.update_one(
                                     {"_id": person["_id"]},
                                     {"$set": uppdaterad_person}
                                 )
-                                st.success("Person uppdaterad!")
-                                st.rerun()
+                                
+                                if result.modified_count > 0 and changes:
+                                    log_action("update", f"Uppdaterade person: {person['namn']} - Ändrade {', '.join(changes)}", "person")
+                                    st.success("Person uppdaterad!")
+                                    st.rerun()
+                                else:
+                                    st.error("Inga ändringar gjordes")
 
                         with col2:
                             if st.form_submit_button("Ta bort", type="secondary"):
-                                db.personer.delete_one({"_id": person["_id"]})
-                                st.success(f"{person['namn']} borttagen!")
-                                st.rerun()
+                                log_action("delete", f"Tog bort person: {person['namn']}", "person")
+                                result = db.personer.delete_one({"_id": person["_id"]})
+                                if result.deleted_count > 0:
+                                    st.success(f"{person['namn']} borttagen!")
+                                    st.rerun()
+                                else:
+                                    st.error("Kunde inte ta bort personen")
 
-            # Divider efter varje enhet
+            # Visuell separator
             st.markdown("---")

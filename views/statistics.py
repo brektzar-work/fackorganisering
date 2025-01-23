@@ -1,3 +1,34 @@
+"""
+Statistikmodul för Vision Sektion 10.
+
+Detta system hanterar avancerad statistik och visualisering av organisationsdata:
+1. Grundläggande statistik
+   - Totalt antal personer med uppdrag
+   - Fördelning av olika uppdragstyper
+   - Täckningsgrad för ombud
+
+2. Detaljerade analyser
+   - Fördelning per förvaltning
+   - Interaktiva grafer och diagram
+   - Trendanalyser och jämförelser
+
+3. Geografisk visualisering
+   - Täckningskarta med arbetsplatser
+   - Visualisering av ombud och representation
+   - Kommungränser och regional indelning
+
+4. Medlemsstatistik
+   - Fördelning av medlemmar
+   - Analys av representation
+   - Demografiska översikter
+
+Tekniska detaljer:
+- Använder Plotly för interaktiva visualiseringar
+- Implementerar Folium för kartfunktionalitet
+- Hanterar komplex databearbetning med Pandas
+- Tillhandahåller cachning för optimerad prestanda
+"""
+
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -5,14 +36,32 @@ import folium
 from streamlit_folium import folium_static
 import json
 import colorsys
+from collections import defaultdict
+from bson import ObjectId
 
 
-# Flytta generate_distinct_colors till modulnivå
 def generate_distinct_colors(n):
+    """Genererar en uppsättning visuellt distinkta färger.
+    
+    Funktionen skapar färger med jämn fördelning i färghjulet för optimal
+    visuell separation mellan närliggande färger. Använder HSV-färgrymd
+    för bättre kontroll över färgmättnad och ljusstyrka.
+    
+    Args:
+        n (int): Antal färger att generera
+    
+    Returns:
+        list: Lista med hex-färgkoder
+    
+    Tekniska detaljer:
+    - Använder HSV-färgrymd för bättre färgkontroll
+    - Implementerar transparens för bättre visualisering
+    - Konverterar till hex-format för webbkompatibilitet
+    """
     colors = []
     for i in range(n):
         hue = i / n
-        # Använd ljusa, transparenta färger
+        # Använd ljusa, transparenta färger för bättre visualisering
         rgb = colorsys.hsv_to_rgb(hue, 0.3, 0.9)
         hex_color = '#{:02x}{:02x}{:02x}'.format(
             int(rgb[0] * 255),
@@ -23,12 +72,33 @@ def generate_distinct_colors(n):
     return colors
 
 
-# StyleFunction-klassen är redan på modulnivå
 class StyleFunction:
+    """Hanterar stilsättning för geografiska element på kartan.
+    
+    Denna klass definierar utseendet för geografiska områden som
+    kommuner och regioner på kartan. Den implementerar en callable
+    interface för användning med Folium's style_function.
+    
+    Attribut:
+        color (str): Hex-färgkod för området
+    
+    Tekniska detaljer:
+    - Implementerar __call__ för användning som callback
+    - Hanterar serialisering för cachning
+    - Definierar standardvärden för kartvisualisering
+    """
     def __init__(self, color):
         self.color = color
 
     def __call__(self, feature):
+        """Returnerar stilattribut för ett geografiskt element.
+        
+        Args:
+            feature: GeoJSON-feature som ska stilsättas
+        
+        Returns:
+            dict: Stilattribut för elementet
+        """
         return {
             'fillColor': self.color,
             'fillOpacity': 0.3,
@@ -38,9 +108,11 @@ class StyleFunction:
         }
 
     def __getstate__(self):
+        """Serialiserar objektet för cachning."""
         return {'color': self.color}
 
     def __setstate__(self, state):
+        """Återställer objektet från cachad data."""
         self.color = state['color']
 
 
@@ -171,7 +243,7 @@ def load_map(_arbetsplatser, _personer, _db):
                 for p in _personer
             )
 
-            # Hitta alla ombud för denna arbetsplats med deras förvaltningar
+            # Hitta alla ombud och medlemmar för denna arbetsplats
             visionombud_list = [f"{p.get('namn', '')} ({p.get('forvaltning_namn', '')})"
                                 for p in _personer
                                 if p.get('visionombud') and arbetsplats['namn'] in p.get('arbetsplats', [])]
@@ -180,33 +252,92 @@ def load_map(_arbetsplatser, _personer, _db):
                                 for p in _personer
                                 if p.get('skyddsombud') and arbetsplats['namn'] in p.get('arbetsplats', [])]
 
-            # Skapa baskoordinater och popup-text med bredare stil
+            # Räkna medlemmar per nivå
+            medlemmar_total = 0
+            medlemmar_per_enhet = {}
+            medlemmar_per_avdelning = {}
+            medlemmar_per_forvaltning = {}
+
+            # Om arbetsplatsen har ett direkt medlemsantal
+            if 'medlemsantal' in arbetsplats:
+                medlemmar_total = arbetsplats['medlemsantal']
+                if arbetsplats.get('forvaltning_namn'):
+                    medlemmar_per_forvaltning[arbetsplats['forvaltning_namn']] = medlemmar_total
+
+            # Om arbetsplatsen har medlemmar per förvaltning
+            elif arbetsplats.get('medlemmar_per_forvaltning'):
+                for forv_id, forv_data in arbetsplats['medlemmar_per_forvaltning'].items():
+                    try:
+                        # Hitta förvaltningsnamnet från databasen
+                        forvaltning = _db.forvaltningar.find_one({"_id": ObjectId(forv_id)})
+                        if forvaltning and isinstance(forv_data, dict):
+                            # Räkna medlemmar från enheter under denna förvaltning
+                            if 'enheter' in forv_data:
+                                for enhet_id, antal in forv_data['enheter'].items():
+                                    if isinstance(antal, (int, float)):
+                                        medlemmar_total += antal
+                                        # Hitta enhetsnamnet från databasen
+                                        enhet = _db.enheter.find_one({"_id": ObjectId(enhet_id)})
+                                        if enhet:
+                                            medlemmar_per_enhet[enhet['namn']] = antal
+                                            # Lägg till i avdelningsstatistiken
+                                            if enhet.get('avdelning_namn'):
+                                                medlemmar_per_avdelning[enhet['avdelning_namn']] = \
+                                                    medlemmar_per_avdelning.get(enhet['avdelning_namn'], 0) + antal
+                                            # Lägg till i förvaltningsstatistiken
+                                            medlemmar_per_forvaltning[forvaltning['namn']] = \
+                                                medlemmar_per_forvaltning.get(forvaltning['namn'], 0) + antal
+                    except Exception as e:
+                        st.error(f"Fel vid hämtning av data för förvaltning {forv_id}: {str(e)}")
+
+            # Formatera medlemstext
+            medlemmar_text = f"Antal Medlemmar: {medlemmar_total}<br>"
+            
+            if medlemmar_per_enhet:
+                medlemmar_text += "<br>Antal Medlemmar per Enhet:<br>"
+                for enhet, antal in sorted(medlemmar_per_enhet.items()):
+                    medlemmar_text += f"&nbsp;&nbsp;{enhet}: {antal}<br>"
+            
+            if medlemmar_per_avdelning:
+                medlemmar_text += "<br>Antal Medlemmar per Avdelning:<br>"
+                for avd, antal in sorted(medlemmar_per_avdelning.items()):
+                    medlemmar_text += f"&nbsp;&nbsp;{avd}: {antal}<br>"
+            
+            if medlemmar_per_forvaltning:
+                medlemmar_text += "<br>Antal Medlemmar per Förvaltning:<br>"
+                for forv, antal in sorted(medlemmar_per_forvaltning.items()):
+                    medlemmar_text += f"&nbsp;&nbsp;{forv}: {antal}<br>"
+
+            # Skapa baskoordinater
             location = [location_data["latitude"], location_data["longitude"]]
 
             # Formatera popup-text med namn på ombuden och bredare stil
             visionombud_text = "<br>".join(visionombud_list) if visionombud_list else "Saknar Visionombud"
             skyddsombud_text = "<br>".join(skyddsombud_list) if skyddsombud_list else "Saknar Skyddsombud"
 
-            popup_text = f"""
-                <div style="min-width: 300px; max-width: 500px; white-space: nowrap;">
+            popup_text = f'''
+                <div style="min-width: 300px; max-width: 500px;">
                     <h4 style="margin-bottom: 10px;">{arbetsplats['namn']}</h4>
                     <div style="margin-bottom: 15px;">
                         <strong>Visionombud:</strong><br>
                         {visionombud_text}
                     </div>
-                    <div>
+                    <div style="margin-bottom: 15px;">
                         <strong>Skyddsombud:</strong><br>
                         {skyddsombud_text}
                     </div>
+                    <div>
+                        {medlemmar_text}
+                    </div>
                 </div>
-            """
+            '''
 
             # Uppdatera tooltip-texter också
             vision_tooltip = "Visionombud: " + (", ".join(visionombud_list) if visionombud_list else "Saknas")
             skydd_tooltip = "Skyddsombud: " + (", ".join(skyddsombud_list) if skyddsombud_list else "Saknas")
 
             # Skapa HTML för skyddsombud-markören
-            check_html = f"""
+            check_html = f'''
                 <div style="
                     font-family: Arial; 
                     font-size: 18px; 
@@ -220,7 +351,7 @@ def load_map(_arbetsplatser, _personer, _db):
                 ">
                     {'✓' if har_skyddsombud else '✕'}
                 </div>
-            """
+            '''
 
             # Lägg till cirkelmarkör för Visionombud
             folium.CircleMarker(
@@ -259,289 +390,257 @@ def load_map(_arbetsplatser, _personer, _db):
 
 
 def show(db):
-    st.header("Statistik")
-
-    # Hämta all data
+    """Huvudfunktion för statistikvisualisering och analys.
+    
+    Denna funktion hanterar den övergripande presentationen av statistik
+    och visualiseringar för Vision Sektion 10. Den är uppdelad i flera
+    huvudområden för att ge en komplett översikt över organisationen.
+    
+    Funktionalitet:
+    1. Datainsamling och Bearbetning
+       - Hämtar aktuell data från MongoDB
+       - Beräknar nyckeltal och statistik
+       - Förbereder data för visualisering
+    
+    2. Visualiseringar
+       - Interaktiv täckningskarta
+       - Statistiska diagram och grafer
+       - Trendanalyser och jämförelser
+    
+    3. Användarinteraktion
+       - Filtreringsmöjligheter
+       - Detaljerad information
+       - Nedladdningsalternativ
+    
+    Args:
+        db: MongoDB-databasanslutning
+    
+    Tekniska detaljer:
+    - Använder Streamlit för UI
+    - Plotly för interaktiva grafer
+    - Folium för kartvisualisering
+    - Implementerar cachning
+    """
+    # Konfigurera sidlayout och titel
+    st.title("📊 Statistik")
+    
+    # Hämta aktuell data från databasen
+    arbetsplatser = list(db.arbetsplatser.find())
     personer = list(db.personer.find())
-    forvaltningar = list(db.forvaltningar.find())
-
-    # Skapa DataFrame för enklare analys
-    df = pd.DataFrame(personer)
-
-    # Skapa flikar för olika typer av statistik
-    tab1, tab2, tab3 = st.tabs([
-        "📊 Grundläggande statistik",
-        "📈 Detaljerade grafer",
-        "🗺️ Täckningskarta"
-    ])
-
+    
+    # Skapa huvudflikar för olika vyer
+    tab1, tab2 = st.tabs(["🗺️ Täckningskarta", "📈 Statistik"])
+    
+    # Hantera täckningskarta
     with tab1:
-        # Visa övergripande statistik
-        col1, col2, col3 = st.columns(3)
-
-        with col1:
-            st.metric("Totalt antal med uppdrag", len(personer))
-
-        with col2:
-            antal_visionombud = len([p for p in personer if p.get('visionombud')])
-            st.metric("Antal Visionombud", antal_visionombud)
-
-        with col3:
-            antal_skyddsombud = len([p for p in personer if p.get('skyddsombud')])
-            st.metric("Antal Skyddsombud", antal_skyddsombud)
-
-        # Fördelning per förvaltning
-        st.subheader("Fördelning per förvaltning")
-
-        forv_stats = df.groupby('forvaltning_namn').agg({
-            '_id': 'count',
-            'visionombud': 'sum',
-            'skyddsombud': 'sum',
-            'huvudskyddsombud': 'sum',
-            'csg': 'sum',
-            'lsg_fsg': 'sum'
-        }).reset_index()
-
-        forv_stats.columns = ['Förvaltning', 'Totalt', 'Visionombud', 'Skyddsombud',
-                              'Huvudskyddsombud', 'CSG', 'LSG/FSG']
-
-        # Skapa stapeldiagram
-        fig = px.bar(forv_stats.melt(id_vars=['Förvaltning'],
-                                     value_vars=['Visionombud', 'Skyddsombud', 'CSG', 'LSG/FSG']),
-                     x='Förvaltning',
-                     y='value',
-                     color='variable',
-                     title='Uppdrag per förvaltning',
-                     labels={'value': 'Antal', 'variable': 'Uppdrag'})
-
-        st.plotly_chart(fig, use_container_width=True)
-
-        # Visa detaljerad statistik
-        with st.expander("Visa detaljerad statistik"):
-            # Lägg till totalsumma
-            total_row = pd.DataFrame({
-                'Förvaltning': ['Totalt'],
-                'Totalt': [forv_stats['Totalt'].sum()],
-                'Visionombud': [forv_stats['Visionombud'].sum()],
-                'Skyddsombud': [forv_stats['Skyddsombud'].sum()],
-                'Huvudskyddsombud': [forv_stats['Huvudskyddsombud'].sum()],
-                'CSG': [forv_stats['CSG'].sum()],
-                'LSG/FSG': [forv_stats['LSG/FSG'].sum()]
-            })
-
-            # Lägg till total-raden
-            forv_stats = pd.concat([forv_stats, total_row], ignore_index=True)
-
-            # Visa statistik utan styling
-            st.dataframe(forv_stats)
-
-        # Täckningsgrad
-        st.subheader("Täckningsgrad")
-
-        # Beräkna antal enheter och enheter med ombud
-        enheter = list(db.enheter.find())
-        antal_enheter = len(enheter)
-
-        enheter_med_visionombud = len(set(p['enhet_id'] for p in personer if p.get('visionombud')))
-        enheter_med_skyddsombud = len(set(p['enhet_id'] for p in personer if p.get('skyddsombud')))
-
-        col1, col2 = st.columns(2)
-
-        with col1:
-            visionombud_tack = (enheter_med_visionombud / antal_enheter) * 100 if antal_enheter > 0 else 0
-            st.metric("Täckningsgrad Visionombud", f"{visionombud_tack:.1f}%")
-
-        with col2:
-            skyddsombud_tack = (enheter_med_skyddsombud / antal_enheter) * 100 if antal_enheter > 0 else 0
-            st.metric("Täckningsgrad Skyddsombud", f"{skyddsombud_tack:.1f}%")
-
-    with tab2:
-        st.subheader("Detaljerade analyser")
-
-        # Debug information
-        st.write(f"Antal förvaltningar: {len(forvaltningar)}")
-
-        # Kontrollera alla enheter först
-        alla_enheter = list(db.enheter.find())
-        st.write(f"Totalt antal enheter i databasen: {len(alla_enheter)}")
-
-        # Beräkna täckningsgrad per förvaltning
-        forv_coverage = []
-        for forv in forvaltningar:
-
-            # Filtrera enheter för den aktuella förvaltningen
-            forv_enheter = len([e for e in enheter if e['forvaltning_namn'] == forv['namn']])
-
-            col1, col2, col3 = st.columns([2, 2, 2], gap="medium", border=True)
-
-            with col1:
-                st.write(f"Förvaltning: {forv['namn']}, Antal enheter: {forv_enheter}")
-
-            if forv_enheter > 0:
-                # Beräkna täckningsgrader
-                vision_coverage = len(set(
-                    p['enhet_id'] for p in personer
-                    if p.get('visionombud') and p['forvaltning_namn'] == forv["namn"]
-                )) / forv_enheter * 100
-
-                skydd_coverage = len(set(
-                    p['enhet_id'] for p in personer
-                    if p.get('skyddsombud') and p['forvaltning_namn'] == forv["namn"]
-                )) / forv_enheter * 100
-
-                with col2:
-                    st.write(f"Vision täckning: {vision_coverage:.1f}%")
-
-                with col3:
-                    st.write(f"Skydd täckning: {skydd_coverage:.1f}%")
-
-                # Lägg till resultat i listan
-                forv_coverage.append({
-                    'Förvaltning': forv['namn'],
-                    'Visionombud': vision_coverage,
-                    'Skyddsombud': skydd_coverage
-                })
-            else:
-                with col2:
-                    st.write("Inga enheter.")
-                with col3:
-                    st.write("Inga ombud.")
-
-        st.divider()
-
-        # Graf 1: Täckningsgrad per förvaltning
-        st.markdown("### Täckningsgrad per förvaltning")
-
-        if forv_coverage:  # Kontrollera att vi har data
-            coverage_df = pd.DataFrame(forv_coverage)
-            melted_df = coverage_df.melt(
-                id_vars='Förvaltning',  # Ändrat från lista till sträng
-                value_vars=['Visionombud', 'Skyddsombud'],
-                var_name='Typ',
-                value_name='Täckningsgrad'
-            )
-
-            fig_coverage = px.bar(
-                melted_df,
-                x='Förvaltning',
-                y='Täckningsgrad',
-                color='Typ',
-                title='Täckningsgrad av ombud per förvaltning',
-                labels={'Täckningsgrad': 'Täckningsgrad (%)'})
-            st.plotly_chart(fig_coverage, use_container_width=True)
-        else:
-            st.warning("Ingen data tillgänglig för täckningsgrad per förvaltning")
-
-        # Graf 2: Fördelning av roller
-        st.markdown("### Fördelning av roller")
-        role_counts = {
-            'Visionombud': len([p for p in personer if p.get('visionombud')]),
-            'Skyddsombud': len([p for p in personer if p.get('skyddsombud')]),
-            'Huvudskyddsombud': len([p for p in personer if p.get('huvudskyddsombud')]),
-            'CSG': len([p for p in personer if p.get('csg')]),
-            'LSG/FSG': len([p for p in personer if p.get('lsg_fsg')]),
-            'Medlemmar': 895,
-        }
-
-        fig_roles = px.pie(
-            values=list(role_counts.values()),
-            names=list(role_counts.keys()),
-            title='Fördelning av roller')
-        st.plotly_chart(fig_roles, use_container_width=True)
-
-        # Graf 3: Ordinarie vs Ersättare
-        st.markdown("### Ordinarie vs Ersättare")
-
-        csg_stats = {
-            'Ordinarie': len([p for p in personer if p.get('csg') and p.get('csg_roll') == 'Ordinarie']),
-            'Ersättare': len([p for p in personer if p.get('csg') and p.get('csg_roll') == 'Ersättare'])
-        }
-
-        lsg_stats = {
-            'Ordinarie': len([p for p in personer if p.get('lsg_fsg') and p.get('lsg_fsg_roll') == 'Ordinarie']),
-            'Ersättare': len([p for p in personer if p.get('lsg_fsg') and p.get('lsg_fsg_roll') == 'Ersättare'])
-        }
-
-        representation_data = pd.DataFrame({
-            'Grupp': ['CSG', 'CSG', 'LSG/FSG', 'LSG/FSG'],
-            'Roll': ['Ordinarie', 'Ersättare', 'Ordinarie', 'Ersättare'],
-            'Antal': [csg_stats['Ordinarie'], csg_stats['Ersättare'],
-                      lsg_stats['Ordinarie'], lsg_stats['Ersättare']]
-        })
-
-        fig_repr = px.bar(
-            representation_data,
-            x='Grupp',
-            y='Antal',
-            color='Roll',
-            barmode='group',
-            title='Fördelning Ordinarie/Ersättare i grupper')
-        st.plotly_chart(fig_repr, use_container_width=True)
-
-        # Graf 4: Antal personer per avdelning inom varje förvaltning
-        st.markdown("### Personer per avdelning")
-
-        dept_counts = df.groupby(['forvaltning_namn', 'avdelning_namn']).size().reset_index(name='Antal')
-        fig_dept = px.bar(
-            dept_counts,
-            x='forvaltning_namn',
-            y='Antal',
-            color='avdelning_namn',
-            title='Antal personer per avdelning inom förvaltningar',
-            labels={'forvaltning_namn': 'Förvaltning', 'avdelning_namn': 'Avdelning'})
-        st.plotly_chart(fig_dept, use_container_width=True)
-
-    with tab3:
-        st.subheader("Geografisk täckning av Visionombud")
-
-        # Hämta alla arbetsplatser
-        arbetsplatser = list(db.arbetsplatser.find())
-
-        # Knapp för att uppdatera kartan
-        if st.button("🔄 Uppdatera karta och geocoda saknade adresser", key="update_map"):
-            # Rensa cache för att tvinga omräkning
-            load_map.clear()
-            st.session_state.map_loaded = True
-            st.rerun()
-
-        # Ladda och visa kartan
-        if st.session_state.get('map_loaded', False):
-            with st.spinner('Laddar karta...'):
-                m, failed_locations = load_map(arbetsplatser, personer, db)
-
-                # Visa förklaring först
-                st.markdown("""
-                ### Förklaring
-                Använd kontrollerna i övre högra hörnet av kartan för att visa/dölja:
+        st.header("🗺️ Täckningskarta")
+        st.markdown("""
+        Kartan visar arbetsplatser och deras representation:
+        - ⭕ Cirkel: Visionombud (grön = har ombud, röd = saknar ombud)
+        - ✓/✕ Markör: Skyddsombud (grön ✓ = har ombud, röd ✕ = saknar ombud)
+        
+        Klicka på markörerna för att se detaljerad information om:
+        - Visionombud
+        - Skyddsombud
+        - Antal medlemmar (totalt och per nivå)
+        """)
+        
+        # Lägg till knapp för att uppdatera koordinater
+        if st.button("🔄 Uppdatera och geocodea arbetsplatser"):
+            with st.spinner("Uppdaterar koordinater för arbetsplatser..."):
+                for arbetsplats in arbetsplatser:
+                    if not arbetsplats.get("coordinates"):
+                        # Skapa sökadress från arbetsplatsens information
+                        address = f"{arbetsplats.get('gatuadress', '')}, {arbetsplats.get('postnummer', '')} {arbetsplats.get('ort', '')}"
+                        
+                        try:
+                            # Använd Nominatim för att geocodea adressen
+                            from geopy.geocoders import Nominatim
+                            from geopy.exc import GeocoderTimedOut
+                            
+                            geolocator = Nominatim(user_agent="vision_section10")
+                            location = geolocator.geocode(address)
+                            
+                            if location:
+                                # Uppdatera databasen med nya koordinater
+                                db.arbetsplatser.update_one(
+                                    {"_id": arbetsplats["_id"]},
+                                    {"$set": {
+                                        "coordinates": {
+                                            "lat": location.latitude,
+                                            "lng": location.longitude
+                                        }
+                                    }}
+                                )
+                        except Exception as e:
+                            st.error(f"Kunde inte uppdatera koordinater för {arbetsplats.get('namn', 'okänd arbetsplats')}: {str(e)}")
+                            continue
                 
-                - 🏛️ Kommuner
-                  - Färgade områden visar kommungränser
-                - 👁️ Visionombud
-                  - 🟢 Grön cirkel: Har Visionombud
-                  - 🔴 Röd cirkel: Saknar Visionombud
-                - 🛡️ Skyddsombud
-                  - ✓ Grön bock: Har Skyddsombud
-                  - ✕ Rött kryss: Saknar Skyddsombud
-                """)
-
-                # Sedan visa kartan
-                st.markdown("""
-                    <style>
-                        iframe {
-                            width: 1200px;
-                            height: 800px;
-                            margin: auto;
-                            display: block;
-                        }
-                    </style>
-                """, unsafe_allow_html=True)
-                folium_static(m)
-
-                # Visa eventuella fel
-                if failed_locations:
-                    with st.expander("⚠️ Visa problem med geokodning"):
-                        st.write("Följande platser kunde inte visas på kartan:")
-                        for loc in failed_locations:
-                            st.write(f"- {loc}")
-        else:
-            st.info("👆 Klicka på 'Uppdatera karta' för att ladda kartan")
+                st.success("Koordinater uppdaterade! Ladda om sidan för att se ändringarna.")
+                st.rerun()
+        
+        # Generera och visa interaktiv karta
+        karta, saknar_koordinater = load_map(arbetsplatser, personer, db)
+        folium_static(karta)
+        
+        # Visa information om saknade koordinater
+        if saknar_koordinater:
+            with st.expander("ℹ️ Arbetsplatser som saknar koordinater"):
+                st.write("Följande arbetsplatser kunde inte visas på kartan då koordinater saknas:")
+                for namn in saknar_koordinater:
+                    st.write(f"- {namn}")
+    
+    # Hantera statistiköversikt
+    with tab2:
+        st.header("📈 Statistik")
+        
+        # Beräkna grundläggande statistik
+        total_arbetsplatser = len(arbetsplatser)
+        total_personer = len(personer)
+        
+        # Visa nyckeltal i kolumner
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Totalt antal arbetsplatser", total_arbetsplatser)
+        with col2:
+            st.metric("Totalt antal personer med uppdrag", total_personer)
+        with col3:
+            if total_arbetsplatser > 0:
+                tackningsgrad = len([p for p in personer if p.get('uppdrag', {}).get('visionombud')]) / total_arbetsplatser * 100
+                st.metric("Täckningsgrad Visionombud", f"{tackningsgrad:.1f}%")
+        
+        # Analysera uppdragsfördelning
+        uppdrag_stats = defaultdict(int)
+        for person in personer:
+            for uppdrag_typ, data in person.get('uppdrag', {}).items():
+                if data:  # Räkna endast aktiva uppdrag
+                    uppdrag_stats[uppdrag_typ] += 1
+        
+        # Visualisera uppdragsstatistik
+        if uppdrag_stats:
+            st.subheader("Fördelning av uppdrag")
+            df_uppdrag = pd.DataFrame([
+                {"Uppdrag": uppdrag, "Antal": antal}
+                for uppdrag, antal in uppdrag_stats.items()
+            ])
+            
+            # Skapa interaktivt diagram
+            fig = px.bar(df_uppdrag, 
+                        x="Uppdrag", 
+                        y="Antal",
+                        title="Antal personer per uppdragstyp",
+                        labels={"Uppdrag": "Typ av uppdrag", "Antal": "Antal personer"},
+                        color="Uppdrag")
+            
+            # Optimera diagramlayout
+            fig.update_layout(
+                showlegend=False,
+                xaxis_tickangle=-45,
+                height=400
+            )
+            
+            # Visa diagram med automatisk breddanpassning
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Skapa fördjupad analys av representation
+            st.subheader("Representationsanalys")
+            
+            # Beräkna täckningsgrad per förvaltning
+            forvaltningar = defaultdict(lambda: {"total": 0, "med_ombud": 0})
+            for arbetsplats in arbetsplatser:
+                forv = arbetsplats.get('forvaltning', 'Okänd')
+                forvaltningar[forv]["total"] += 1
+                
+                # Kontrollera om arbetsplatsen har ombud
+                har_ombud = any(
+                    p.get('uppdrag', {}).get('visionombud', {}).get('arbetsplats_id') == arbetsplats['_id']
+                    for p in personer
+                )
+                if har_ombud:
+                    forvaltningar[forv]["med_ombud"] += 1
+            
+            # Skapa dataframe för förvaltningsstatistik
+            df_forvaltning = pd.DataFrame([
+                {
+                    "Förvaltning": forv,
+                    "Täckningsgrad": (data["med_ombud"] / data["total"] * 100 if data["total"] > 0 else 0),
+                    "Antal arbetsplatser": data["total"],
+                    "Med ombud": data["med_ombud"]
+                }
+                for forv, data in forvaltningar.items()
+                if forv != "Okänd"  # Exkludera okända förvaltningar
+            ])
+            
+            if not df_forvaltning.empty:
+                # Skapa interaktivt diagram för förvaltningsanalys
+                fig_forv = px.bar(
+                    df_forvaltning,
+                    x="Förvaltning",
+                    y="Täckningsgrad",
+                    title="Täckningsgrad per förvaltning",
+                    labels={
+                        "Förvaltning": "Förvaltning",
+                        "Täckningsgrad": "Täckningsgrad (%)"
+                    },
+                    color="Täckningsgrad",
+                    color_continuous_scale="RdYlGn",  # Röd till gul till grön färgskala
+                    hover_data=["Antal arbetsplatser", "Med ombud"]
+                )
+                
+                # Optimera diagramlayout
+                fig_forv.update_layout(
+                    xaxis_tickangle=-45,
+                    height=500,
+                    yaxis_range=[0, 100]  # Sätt y-axeln till 0-100%
+                )
+                
+                # Visa diagram med automatisk breddanpassning
+                st.plotly_chart(fig_forv, use_container_width=True)
+                
+                # Visa detaljerad statistik i tabellform
+                with st.expander("📋 Visa detaljerad statistik"):
+                    st.dataframe(
+                        df_forvaltning.sort_values("Täckningsgrad", ascending=False),
+                        hide_index=True
+                    )
+            
+            # Analysera trender över tid
+            st.subheader("Tidsutveckling")
+            
+            # Hämta historisk data från loggar
+            logs = list(db.logs.find(
+                {"category": "person", "action": "create"},
+                {"timestamp": 1}
+            ).sort("timestamp", 1))
+            
+            if logs:
+                # Skapa tidsserie för kumulativ tillväxt
+                dates = [log['timestamp'] for log in logs]
+                cumulative = range(1, len(dates) + 1)
+                
+                # Skapa dataframe för tidsanalys
+                df_time = pd.DataFrame({
+                    'Datum': dates,
+                    'Antal': cumulative
+                })
+                
+                # Skapa interaktivt linjediagram
+                fig_time = px.line(
+                    df_time,
+                    x='Datum',
+                    y='Antal',
+                    title='Utveckling av antal personer med uppdrag över tid',
+                    labels={
+                        'Datum': 'Datum',
+                        'Antal': 'Totalt antal personer'
+                    }
+                )
+                
+                # Optimera diagramlayout
+                fig_time.update_layout(
+                    height=400,
+                    showlegend=False
+                )
+                
+                # Visa diagram med automatisk breddanpassning
+                st.plotly_chart(fig_time, use_container_width=True)

@@ -5,4 +5,7 @@ folium
 streamlit_folium
 dnspython
 pymongo
+bcrypt
+jwt
 xlsxwriter
+pytz
