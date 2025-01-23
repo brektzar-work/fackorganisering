@@ -434,7 +434,7 @@ def show(db):
                                 with col2:
                                     if st.form_submit_button("Ta bort", type="secondary"):
                                         # Kontrollera om det finns personer kopplade till arbetsplatsen
-                                        if db.personer.find_one({"arbetsplats_id": arbetsplats["_id"]}):
+                                        if db.personer.find_one({"arbetsplats": arbetsplats["namn"]}):
                                             st.error("❌ Kan inte ta bort arbetsplats som har personer")
                                         else:
                                             # Ta bort arbetsplatsen och logga händelsen

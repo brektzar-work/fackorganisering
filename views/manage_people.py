@@ -317,10 +317,13 @@ def show(db):
                                 {"alla_forvaltningar": True}
                             ]
                         }))
+                        arbetsplats_options = [a["namn"] for a in arbetsplatser]
+                        # Filter out any default values that aren't in the options
+                        current_arbetsplatser = [ap for ap in person.get("arbetsplats", []) if ap in arbetsplats_options]
                         ny_arbetsplats = st.multiselect(
                             "Arbetsplats",
-                            options=[a["namn"] for a in arbetsplatser],
-                            default=person.get("arbetsplats", []),
+                            options=arbetsplats_options,
+                            default=current_arbetsplatser,
                             help="Välj en eller flera arbetsplatser"
                         )
 
