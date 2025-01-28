@@ -9,5 +9,6 @@ pymongo
 bcrypt
 jwt
 xlsxwriter
+openpyxl
 pytz
 streamlit_nested_layout
