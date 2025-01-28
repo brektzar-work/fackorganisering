@@ -14,12 +14,13 @@ Tekniska detaljer:
 import streamlit as st
 import pandas as pd
 from io import BytesIO
-import datetime
+import openpyxl
+from views.cache_manager import get_cached_data, update_cache_after_change
 
 
-def create_excel_file(db):
+def create_excel_file(cached_data, selected_data):
     """
-    Skapar en komplett Excel-fil med organisationsdata från databasen.
+    Skapar en Excel-fil med vald data.
     
     Funktionen:
     1. Skapar en Excel-fil i minnet med flera flikar
@@ -28,7 +29,8 @@ def create_excel_file(db):
     4. Skapar separata flikar för arbetsplatser och styrelser/nämnder
     
     Args:
-        db: MongoDB-databasanslutning med tillgång till alla collections
+        cached_data: Cachad data från databasen
+        selected_data: Lista över data som ska exporteras
     
     Returns:
         bytes: Excel-filens innehåll som bytes för nedladdning
@@ -40,241 +42,86 @@ def create_excel_file(db):
     - Hanterar relationer mellan olika collections
     """
     output = BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        workbook = writer.book
-        
-        # Formatering för olika organisationsnivåer
-        # Vision-blå (#210061) för rubriker
-        header_format = workbook.add_format({
-            'bold': True,
-            'bg_color': '#210061',
-            'font_color': 'white',
-            'border': 1
-        })
-        
-        # Vision-grön (#00A68A) för förvaltningar
-        forvaltning_format = workbook.add_format({
-            'bold': True,
-            'bg_color': '#00A68A',
-            'border': 6
-        })
-        
-        # Vision-lila (#7930AE) för avdelningar
-        avdelning_format = workbook.add_format({
-            'bold': True,
-            'bg_color': '#7930AE',
-            'font_color': 'white',
-            'border': 1
-        })
-        
-        # Ljuslila (#bc98d7) för enheter
-        enhet_format = workbook.add_format({
-            'bold': True,
-            'bg_color': '#bc98d7',
-            'border': 1
-        })
-        
-        # Mycket ljuslila (#f2eaf7) för personal
-        person_format = workbook.add_format({
-            'bg_color': '#f2eaf7',
-            'border': 1
-        })
-        
-        # Hämta all nödvändig data från databasen
-        forvaltningar = list(db.forvaltningar.find())
-        avdelningar = list(db.avdelningar.find())
-        enheter = list(db.enheter.find())
-        personer = list(db.personer.find())
-        arbetsplatser = list(db.arbetsplatser.find())
-        boards = list(db.boards.find())
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        # Personer
+        if 'personer' in selected_data:
+            df_personer = pd.DataFrame([{
+                'Namn': p['namn'],
+                'Förvaltning': p.get('forvaltning_namn', ''),
+                'Avdelning': p.get('avdelning_namn', ''),
+                'Enhet': p.get('enhet_namn', ''),
+                'Arbetsplats': p.get('arbetsplats', ''),
+                'Visionombud': 'Ja' if p.get('visionombud') else 'Nej',
+                'Skyddsombud': 'Ja' if p.get('skyddsombud') else 'Nej',
+                'Huvudskyddsombud': 'Ja' if p.get('huvudskyddsombud') else 'Nej',
+                'LSG/FSG': 'Ja' if p.get('lsg_fsg') else 'Nej',
+                'CSG': 'Ja' if p.get('csg') else 'Nej'
+            } for p in cached_data['personer']])
+            df_personer.to_excel(writer, sheet_name='Personer', index=False)
 
-        # Skapa hierarkisk datastruktur
-        hierarkisk_data = []
-        row_formats = []  # Lista för radspecifik formatering
-        
-        # Bygg hierarkin: Förvaltning -> Nämnd -> Avdelning -> Enhet -> Personal
-        for forv in forvaltningar:
-            # Lägg till förvaltningsnivå
-            hierarkisk_data.append({
-                'Nivå': 'Förvaltning',
-                'Namn': forv['namn'],
-                'Chef': forv['chef'],
-                'Yrkestitel': '',
-                'Sitter i CSG?': '',
-                'Sitter i FSG/LSG?': '',
-                'Skyddsombud?': '',
-                'Huvudskyddsombud?': '',
-                'Visionombud?': '',
-                'Arbetsplats': '',
-                'Telefonnr': '',
-                'Ordinarie Representant': '',
-                'Ersättare': ''
-            })
-            row_formats.append(forvaltning_format)
-            
-            # Identifiera och lägg till nämnder kopplade till förvaltningen
-            forv_boards = [b for b in boards if any(
-                person['forvaltning_id'] == forv['_id'] 
-                for person in personer 
-                if person['namn'] in b.get('ledamoter', []) + b.get('ersattare', [])
-            )]
-            
-            for board in forv_boards:
-                # Filtrera ledamöter och ersättare för aktuell förvaltning
-                forv_ledamoter = [
-                    person['namn'] for person in personer 
-                    if person['forvaltning_id'] == forv['_id'] 
-                    and person['namn'] in board.get('ledamoter', [])
-                ]
-                forv_ersattare = [
-                    person['namn'] for person in personer 
-                    if person['forvaltning_id'] == forv['_id'] 
-                    and person['namn'] in board.get('ersattare', [])
-                ]
-                
-                if forv_ledamoter or forv_ersattare:
-                    hierarkisk_data.append({
-                        'Nivå': 'Nämnd',
-                        'Namn': board['namn'],
-                        'Chef': '',
-                        'Yrkestitel': '',
-                        'Sitter i CSG?': '',
-                        'Sitter i FSG/LSG?': '',
-                        'Skyddsombud?': '',
-                        'Huvudskyddsombud?': '',
-                        'Visionombud?': '',
-                        'Arbetsplats': '',
-                        'Telefonnr': '',
-                        'Ordinarie Representant': ', '.join(forv_ledamoter),
-                        'Ersättare': ', '.join(forv_ersattare)
-                    })
-                    row_formats.append(workbook.add_format({
-                        'bg_color': '#EFE9E5',  # Ljusgrå för nämnder
-                        'border': 9
-                    }))
-            
-            # Lägg till avdelningar under förvaltningen
-            forv_avd = [a for a in avdelningar if a['forvaltning_id'] == forv['_id']]
-            for avd in forv_avd:
-                hierarkisk_data.append({
-                    'Nivå': 'Avdelning',
-                    'Namn': avd['namn'],
-                    'Chef': avd['chef'],
-                    'Yrkestitel': '',
-                    'Sitter i CSG?': '',
-                    'Sitter i FSG/LSG?': '',
-                    'Skyddsombud?': '',
-                    'Huvudskyddsombud?': '',
-                    'Visionombud?': '',
-                    'Arbetsplats': '',
-                    'Telefonnr': '',
-                    'Ordinarie Representant': '',
-                    'Ersättare': ''
-                })
-                row_formats.append(avdelning_format)
-                
-                # Lägg till enheter under avdelningen
-                avd_enh = [e for e in enheter if e['avdelning_id'] == avd['_id']]
-                for enh in avd_enh:
-                    hierarkisk_data.append({
-                        'Nivå': 'Enhet',
-                        'Namn': enh['namn'],
-                        'Chef': enh['chef'],
-                        'Yrkestitel': '',
-                        'Sitter i CSG?': '',
-                        'Sitter i FSG/LSG?': '',
-                        'Skyddsombud?': '',
-                        'Huvudskyddsombud?': '',
-                        'Visionombud?': '',
-                        'Arbetsplats': '',
-                        'Telefonnr': '',
-                        'Ordinarie Representant': '',
-                        'Ersättare': ''
-                    })
-                    row_formats.append(enhet_format)
-                    
-                    # Lägg till personal under enheten
-                    enh_personer = [p for p in personer if p['enhet_id'] == enh['_id']]
-                    for person in enh_personer:
-                        hierarkisk_data.append({
-                            'Nivå': 'Personal',
-                            'Namn': person['namn'],
-                            'Chef': '',
-                            'Yrkestitel': person.get('yrkestitel', ''),
-                            'Sitter i CSG?': f"{person.get('csg_roll', '')}" if person.get('csg') else 'Nej',
-                            'Sitter i FSG/LSG?': f"{person.get('lsg_fsg_roll', '')}" if person.get('lsg_fsg') else 'Nej',
-                            'Skyddsombud?': 'Ja' if person.get('skyddsombud') else 'Nej',
-                            'Huvudskyddsombud?': 'Ja' if person.get('huvudskyddsombud') else 'Nej',
-                            'Visionombud?': 'Ja' if person.get('visionombud') else 'Nej',
-                            'Arbetsplats': ', '.join(person.get('arbetsplats', [])),
-                            'Telefonnr': person.get('telefon', ''),
-                            'Ordinarie Representant': '',
-                            'Ersättare': ''
-                        })
-                        row_formats.append(person_format)
+        # Arbetsplatser
+        if 'arbetsplatser' in selected_data:
+            df_arbetsplatser = pd.DataFrame([{
+                'Namn': a['namn'],
+                'Förvaltning': a.get('forvaltning_namn', ''),
+                'Avdelning': a.get('avdelning_namn', ''),
+                'Enhet': a.get('enhet_namn', ''),
+                'Gatuadress': a.get('gatuadress', ''),
+                'Postnummer': a.get('postnummer', ''),
+                'Ort': a.get('ort', ''),
+                'Global': 'Ja' if a.get('alla_forvaltningar') else 'Nej'
+            } for a in cached_data['arbetsplatser']])
+            df_arbetsplatser.to_excel(writer, sheet_name='Arbetsplatser', index=False)
 
-        # Skapa och formatera organisationsfliken
-        df_hierarki = pd.DataFrame(hierarkisk_data)
-        df_hierarki.to_excel(writer, sheet_name='Organisation', index=False)
-        worksheet = writer.sheets['Organisation']
-        
-        # Optimera kolumnbredder baserat på innehåll
-        for idx, col in enumerate(df_hierarki.columns):
-            max_length = max(len(col) + 2, df_hierarki[col].astype(str).str.len().max() + 2)
-            worksheet.set_column(idx, idx, max_length)
-        
-        # Applicera rubrikformatering
-        for col_num, value in enumerate(df_hierarki.columns.values):
-            worksheet.write(0, col_num, value, header_format)
-        
-        # Applicera radspecifik formatering
-        for row_num, format in enumerate(row_formats, start=1):
-            for col_num in range(len(df_hierarki.columns)):
-                cell_value = df_hierarki.iloc[row_num-1, col_num]
-                if pd.isna(cell_value):
-                    cell_value = ''
-                else:
-                    cell_value = str(cell_value)
-                worksheet.write(row_num, col_num, cell_value, format)
+        # Förvaltningar
+        if 'forvaltningar' in selected_data:
+            df_forvaltningar = pd.DataFrame([{
+                'Namn': f['namn'],
+                'Chef': f.get('chef', ''),
+                'Antal Avdelningar': len([a for a in cached_data['avdelningar'] 
+                                        if a.get('forvaltning_id') == f['_id']]),
+                'Antal Enheter': len([e for e in cached_data['enheter'] 
+                                    if e.get('forvaltning_id') == f['_id']]),
+                'Antal Personer': len([p for p in cached_data['personer'] 
+                                     if p.get('forvaltning_id') == f['_id']])
+            } for f in cached_data['forvaltningar']])
+            df_forvaltningar.to_excel(writer, sheet_name='Förvaltningar', index=False)
 
-        # Skapa och formatera arbetsplatsfliken
-        arbetsplats_data = [{
-            'Arbetsplats': ap['namn'],
-            'Förvaltning': next((f['namn'] for f in forvaltningar 
-                               if f['_id'] == ap.get('forvaltning_id')), 'Alla förvaltningar')
-        } for ap in arbetsplatser]
-        
-        df_arbetsplatser = pd.DataFrame(arbetsplats_data)
-        df_arbetsplatser = df_arbetsplatser.fillna('')
-        df_arbetsplatser.to_excel(writer, sheet_name='Arbetsplatser', index=False)
-        
-        # Formatera arbetsplatsfliken
-        worksheet = writer.sheets['Arbetsplatser']
-        for idx, col in enumerate(df_arbetsplatser.columns):
-            max_length = max(len(col) + 2, df_arbetsplatser[col].astype(str).str.len().max() + 2)
-            worksheet.set_column(idx, idx, max_length)
-        
-        for col_num, value in enumerate(df_arbetsplatser.columns.values):
-            worksheet.write(0, col_num, value, header_format)
+        # Avdelningar
+        if 'avdelningar' in selected_data:
+            df_avdelningar = pd.DataFrame([{
+                'Namn': a['namn'],
+                'Förvaltning': a.get('forvaltning_namn', ''),
+                'Chef': a.get('chef', ''),
+                'Antal Enheter': len([e for e in cached_data['enheter'] 
+                                    if e.get('avdelning_id') == a['_id']]),
+                'Antal Personer': len([p for p in cached_data['personer'] 
+                                     if p.get('avdelning_id') == a['_id']])
+            } for a in cached_data['avdelningar']])
+            df_avdelningar.to_excel(writer, sheet_name='Avdelningar', index=False)
 
-        # Skapa och formatera styrelser/nämnder-fliken
-        boards_data = [{
-            'Styrelse/Nämnd': board['namn'],
-            'Ordinarie': ', '.join(board.get('ledamoter', [])),
-            'Ersättare': ', '.join(board.get('ersattare', []))
-        } for board in boards]
-        
-        df_boards = pd.DataFrame(boards_data)
-        df_boards.to_excel(writer, sheet_name='Styrelser & Nämnder', index=False)
-        
-        # Formatera styrelser/nämnder-fliken
-        worksheet = writer.sheets['Styrelser & Nämnder']
-        for idx, col in enumerate(df_boards.columns):
-            max_length = max(len(col) + 2, df_boards[col].astype(str).str.len().max() + 2)
-            worksheet.set_column(idx, idx, max_length)
-            
-        for col_num, value in enumerate(df_boards.columns.values):
-            worksheet.write(0, col_num, value, header_format)
+        # Enheter
+        if 'enheter' in selected_data:
+            df_enheter = pd.DataFrame([{
+                'Namn': e['namn'],
+                'Förvaltning': e.get('forvaltning_namn', ''),
+                'Avdelning': e.get('avdelning_namn', ''),
+                'Chef': e.get('chef', ''),
+                'Antal Personer': len([p for p in cached_data['personer'] 
+                                     if p.get('enhet_id') == e['_id']])
+            } for e in cached_data['enheter']])
+            df_enheter.to_excel(writer, sheet_name='Enheter', index=False)
+
+        # Styrelser och Nämnder
+        if 'boards' in selected_data:
+            df_boards = pd.DataFrame([{
+                'Namn': b['namn'],
+                'Typ': b.get('typ', ''),
+                'Förvaltning': b.get('forvaltning_namn', ''),
+                'Ordinarie Ledamöter': ', '.join(b.get('ledamoter', [])),
+                'Ersättare': ', '.join(b.get('ersattare', []))
+            } for b in cached_data.get('boards', [])])
+            df_boards.to_excel(writer, sheet_name='Styrelser & Nämnder', index=False)
 
     return output.getvalue()
 
@@ -305,22 +152,107 @@ def show(db):
     - Översikt över styrelser och nämnder med ledamöter
     
     Filen kommer att innehålla följande flikar:
-    1. **Organisation** - Hierarkisk vy av hela organisationen
+    1. **Personer** - Lista över alla personer och deras roller
     2. **Arbetsplatser** - Lista över alla arbetsplatser
-    3. **Styrelser & Nämnder** - Översikt över alla styrelser och nämnder
+    3. **Förvaltningar** - Översikt över alla förvaltningar
+    4. **Avdelningar** - Lista över alla avdelningar
+    5. **Enheter** - Lista över alla enheter
+    6. **Styrelser & Nämnder** - Översikt över alla styrelser och nämnder
     """)
     
-    # Skapa nedladdningsknapp
-    if st.button("📥 Generera Excel-fil"):
-        excel_data = create_excel_file(db)
-        current_date = datetime.datetime.now().strftime("%Y-%m-%d")
-        filename = f"Vision_Export_{current_date}.xlsx"
+    # Ladda cachad data
+    cached, indexes = get_cached_data(db)
+    
+    # Uppdateringsknapp i sidofältet
+    if st.sidebar.button("↻ Uppdatera data", key="refresh_export"):
+        cached, indexes = get_cached_data(db, force_refresh=True)
+        st.rerun()
+
+    # Välj data att exportera
+    st.subheader("Välj data att exportera")
+    selected_data = st.multiselect(
+        "Välj vilken data som ska exporteras",
+        options=['personer', 'arbetsplatser', 'forvaltningar', 'avdelningar', 'enheter', 'boards'],
+        default=['personer', 'arbetsplatser'],
+        format_func=lambda x: {
+            'personer': 'Personer',
+            'arbetsplatser': 'Arbetsplatser',
+            'forvaltningar': 'Förvaltningar',
+            'avdelningar': 'Avdelningar',
+            'enheter': 'Enheter',
+            'boards': 'Styrelser & Nämnder'
+        }[x]
+    )
+
+    if selected_data:
+        # Skapa Excel-fil
+        excel_data = create_excel_file(cached, selected_data)
         
+        # Ladda ner fil
         st.download_button(
-            label="⬇️ Ladda ner Excel-fil",
+            label="📥 Ladda ner Excel-fil",
             data=excel_data,
-            file_name=filename,
+            file_name="vision_sektion10_export.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
         
-        st.success("✅ Excel-fil genererad! Klicka på knappen ovan för att ladda ner.")
+        # Förhandsvisning av data
+        st.subheader("Förhandsvisning")
+        for data_type in selected_data:
+            if data_type == 'personer':
+                st.markdown("### Personer")
+                df = pd.DataFrame([{
+                    'Namn': p['namn'],
+                    'Förvaltning': p.get('forvaltning_namn', ''),
+                    'Arbetsplats': p.get('arbetsplats', '')
+                } for p in cached['personer']])
+                st.dataframe(df, hide_index=True)
+            
+            elif data_type == 'arbetsplatser':
+                st.markdown("### Arbetsplatser")
+                df = pd.DataFrame([{
+                    'Namn': a['namn'],
+                    'Förvaltning': a.get('forvaltning_namn', ''),
+                    'Adress': f"{a.get('gatuadress', '')}, {a.get('postnummer', '')} {a.get('ort', '')}"
+                } for a in cached['arbetsplatser']])
+                st.dataframe(df, hide_index=True)
+            
+            elif data_type == 'forvaltningar':
+                st.markdown("### Förvaltningar")
+                df = pd.DataFrame([{
+                    'Namn': f['namn'],
+                    'Chef': f.get('chef', ''),
+                    'Antal Avdelningar': len([a for a in cached['avdelningar'] 
+                                            if a.get('forvaltning_id') == f['_id']])
+                } for f in cached['forvaltningar']])
+                st.dataframe(df, hide_index=True)
+            
+            elif data_type == 'avdelningar':
+                st.markdown("### Avdelningar")
+                df = pd.DataFrame([{
+                    'Namn': a['namn'],
+                    'Förvaltning': a.get('forvaltning_namn', ''),
+                    'Chef': a.get('chef', '')
+                } for a in cached['avdelningar']])
+                st.dataframe(df, hide_index=True)
+            
+            elif data_type == 'enheter':
+                st.markdown("### Enheter")
+                df = pd.DataFrame([{
+                    'Namn': e['namn'],
+                    'Förvaltning': e.get('forvaltning_namn', ''),
+                    'Avdelning': e.get('avdelning_namn', ''),
+                    'Chef': e.get('chef', '')
+                } for e in cached['enheter']])
+                st.dataframe(df, hide_index=True)
+            
+            elif data_type == 'boards':
+                st.markdown("### Styrelser & Nämnder")
+                df = pd.DataFrame([{
+                    'Namn': b['namn'],
+                    'Typ': b.get('typ', ''),
+                    'Förvaltning': b.get('forvaltning_namn', '')
+                } for b in cached.get('boards', [])])
+                st.dataframe(df, hide_index=True)
+    else:
+        st.info("Välj minst en datatyp att exportera.")

@@ -45,6 +45,27 @@ st.set_page_config(
     layout="wide"  # Använd hela skärmbredden för bättre översikt
 )
 
+def ensure_indexes(db):
+    """Skapar MongoDB index för optimerad prestanda"""
+    # Personer collection
+    db.personer.create_index([("forvaltning_id", 1)])
+    db.personer.create_index([("avdelning_id", 1)])
+    db.personer.create_index([("enhet_id", 1)])
+    db.personer.create_index([("arbetsplats", 1)])
+    db.personer.create_index([("namn", 1)])
+
+    # Arbetsplatser collection
+    db.arbetsplatser.create_index([("forvaltning_id", 1)])
+    db.arbetsplatser.create_index([("namn", 1)])
+    db.arbetsplatser.create_index([("alla_forvaltningar", 1)])
+
+    # Avdelningar collection
+    db.avdelningar.create_index([("forvaltning_id", 1)])
+    db.avdelningar.create_index([("namn", 1)])
+
+    # Enheter collection
+    db.enheter.create_index([("avdelning_id", 1)])
+    db.enheter.create_index([("namn", 1)])
 
 def main():
     """
@@ -66,6 +87,9 @@ def main():
     db = init_db()
     if db is None:
         return  # Avbryt om databasanslutning misslyckas
+
+    # Säkerställ att index finns
+    ensure_indexes(db)
 
     # Initiera autentiseringssystem och sessionshantering
     init_auth()

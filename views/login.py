@@ -12,52 +12,87 @@ Tekniska detaljer:
 """
 
 import streamlit as st
-from auth import login
-from views.custom_logging import log_action, current_time
+from views.custom_logging import log_action
+import bcrypt
+
+
+def hash_password(password: str) -> bytes:
+    """Hashar lösenordet med bcrypt."""
+    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+
+
+def verify_password(password: str, hashed: bytes) -> bool:
+    """Verifierar ett lösenord mot dess hash."""
+    return bcrypt.checkpw(password.encode('utf-8'), hashed)
 
 
 def show_login(db):
-    """
-    Visar och hanterar inloggningsformuläret för Vision Sektion 10.
-    
-    Funktionen:
-    1. Visar Vision's logotyp och välkomstmeddelande
-    2. Presenterar inloggningsformulär med användarnamn och lösenord
-    3. Hanterar inloggningsförsök och visar relevant feedback
-    4. Loggar både lyckade och misslyckade inloggningsförsök
-    
-    Args:
-        db: MongoDB-databasanslutning för användarautentisering
-    
-    Tekniska detaljer:
-    - Använder Streamlit's formulärhantering för säker inmatning
-    - Döljer lösenord vid inmatning
-    - Implementerar automatisk omladdning vid lyckad inloggning
-    - Visar användarvänliga felmeddelanden vid misslyckade försök
-    """
-    # Visa Vision's logotyp och välkomstmeddelande
-    st.markdown("""
-        <div style="text-align: center; margin-bottom: 2rem;">
-            <img src="https://varumarke.vision.se/brandcenter/upload_path/visionbc/1561468181kx13j36au2.gif" 
-                 style="max-width: 200px;">
-            <h2 style="color: #EFE9E5;">Vision Sektion 10 - Inloggning</h2>
-        </div>
-    """, unsafe_allow_html=True)
+    """Visar och hanterar inloggningsgränssnittet."""
+    st.header("Logga in")
 
-    # Skapa inloggningsformulär med säker lösenordsinmatning
-    with st.form("login_form"):
+    # Kontrollera om det finns några användare
+    if not db.users.find_one():
+        st.warning("Inga användare finns i systemet. Skapa en administratör.")
+        with st.form("create_admin"):
+            username = st.text_input("Användarnamn")
+            password = st.text_input("Lösenord", type="password")
+            confirm_password = st.text_input("Bekräfta lösenord", type="password")
+            
+            if st.form_submit_button("Skapa administratör"):
+                if not username or not password:
+                    st.error("Både användarnamn och lösenord krävs!")
+                elif password != confirm_password:
+                    st.error("Lösenorden matchar inte!")
+                elif len(password) < 8:
+                    st.error("Lösenordet måste vara minst 8 tecken långt!")
+                else:
+                    # Skapa admin-användare
+                    db.users.insert_one({
+                        "username": username,
+                        "password": hash_password(password),
+                        "role": "Admin"
+                    })
+                    log_action("create", f"Skapade administratörskonto: {username}", "admin")
+                    st.success("Administratörskonto skapat! Du kan nu logga in.")
+                    st.rerun()
+        return
+
+    # Visa inloggningsformulär
+    with st.form("login"):
         username = st.text_input("Användarnamn")
-        password = st.text_input("Lösenord", type="password")  # Dölj lösenord vid inmatning
-        submitted = st.form_submit_button("Logga in")
-
-        if submitted:
-            # Försök logga in och hantera resultatet
-            if login(db, username, password):
-                # Logga lyckad inloggning och uppdatera gränssnittet
-                log_action("login", f"Användare {username} loggade in", "auth")
-                st.success("Inloggning lyckades!")
-                st.rerun()  # Ladda om sidan för att uppdatera sessionstillstånd
-            else:
-                # Logga misslyckat försök och visa felmeddelande
-                log_action("failed_login", f"Misslyckat inloggningsförsök för användare: {username}", "auth")
-                st.error("Felaktigt användarnamn eller lösenord")
+        password = st.text_input("Lösenord", type="password")
+        
+        if st.form_submit_button("Logga in"):
+            if not username or not password:
+                st.error("Både användarnamn och lösenord krävs!")
+                return
+            
+            # Hämta användare från databasen
+            user = db.users.find_one({"username": username})
+            if not user:
+                st.error("Felaktigt användarnamn eller lösenord!")
+                log_action("login", f"Misslyckad inloggning för användare: {username} (användare finns ej)", "auth")
+                return
+            
+            # Verifiera lösenord
+            if not verify_password(password, user["password"]):
+                st.error("Felaktigt användarnamn eller lösenord!")
+                log_action("login", f"Misslyckad inloggning för användare: {username} (fel lösenord)", "auth")
+                return
+            
+            # Spara inloggningsinformation i session state
+            st.session_state.authenticated = True
+            st.session_state.username = username
+            st.session_state.role = user.get("role", "Användare")
+            
+            # Logga lyckad inloggning
+            log_action("login", f"Lyckad inloggning för användare: {username}", "auth")
+            st.success("Inloggning lyckades!")
+            st.rerun()
+    
+    # Visa information om återställning av lösenord
+    with st.expander("Glömt lösenord?"):
+        st.info(
+            "Kontakta en administratör för att återställa ditt lösenord. "
+            "Om du är administratör och har glömt ditt lösenord, kontakta systemansvarig."
+        )

@@ -23,239 +23,110 @@ Tekniska detaljer:
 
 import streamlit as st
 import pandas as pd
+from views.cache_manager import get_cached_data, update_cache_after_change
 
 
 def show(db):
-    """Visar huvudöversikten för Vision Sektion 10.
-    
-    Denna komplexa funktion hanterar tre huvudområden:
-    1. Huvudskyddsombud
-       - Visar alla aktiva huvudskyddsombud
-       - Grupperar efter förvaltning
-    
-    2. Uppdragstäckning
-       - Visar täckningsgrad per enhet för:
-         * Visionombud
-         * Skyddsombud
-         * LSG/FSG-representanter
-         * CSG-representanter
-       - Implementerar filtrering per avdelning
-    
-    3. Styrelser och Nämnder
-       - Visar representation i:
-         * Beställarnämnder
-         * Utförarnämnder
-       - Hanterar både ordinarie och ersättare
-    
-    Args:
-        db: MongoDB-databasanslutning med tillgång till collections för:
-           - personer
-           - forvaltningar
-           - avdelningar
-           - enheter
-           - boards
-    """
+    """Visar översikt över organisationen."""
     st.header("Översikt")
 
-    # Sektion för huvudskyddsombud
-    # Visar alla aktiva huvudskyddsombud grupperade efter förvaltning
-    st.subheader("Huvudskyddsombud")
-    huvudskyddsombud = list(db.personer.find({"huvudskyddsombud": True}))
-    if huvudskyddsombud:
-        for person in huvudskyddsombud:
-            st.write(f"- {person['namn']} ({person.get('forvaltning_namn', 'Okänd förvaltning')})")
-    else:
-        st.write("Inga huvudskyddsombud registrerade")
+    # Ladda cachad data
+    cached, indexes = get_cached_data(db)
+    
+    # Uppdateringsknapp i sidofältet
+    if st.sidebar.button("↻ Uppdatera data", key="refresh_overview"):
+        cached, indexes = get_cached_data(db, force_refresh=True)
+        st.rerun()
 
-    st.markdown("---")
+    # Skapa flikar för olika vyer
+    tab1, tab2 = st.tabs(["Organisationsstruktur", "Sökfunktion"])
 
-    # Hämta och validera förvaltningsdata
-    # Detta är grunden för den hierarkiska visningen
-    forvaltningar = list(db.forvaltningar.find())
+    with tab1:
+        st.subheader("Organisationsstruktur")
+        
+        # Visa förvaltningar och deras struktur
+        for forv in cached['forvaltningar']:
+            with st.expander(f"📁 {forv['namn']} - Chef: {forv.get('chef', 'Ej angiven')}"):
+                # Visa antal personer direkt under förvaltningen
+                forv_personer = [p for p in cached['personer'] if p.get('forvaltning_id') == forv['_id']]
+                if forv_personer:
+                    st.markdown(f"**Personer direkt under förvaltningen:** {len(forv_personer)}")
+                
+                # Visa avdelningar under förvaltningen
+                avdelningar = indexes['avdelningar_by_forv'].get(forv['_id'], [])
+                for avd in avdelningar:
+                    with st.expander(f"📂 {avd['namn']} - Chef: {avd.get('chef', 'Ej angiven')}"):
+                        # Visa antal personer direkt under avdelningen
+                        avd_personer = [p for p in cached['personer'] if p.get('avdelning_id') == avd['_id']]
+                        if avd_personer:
+                            st.markdown(f"**Personer direkt under avdelningen:** {len(avd_personer)}")
+                        
+                        # Visa enheter under avdelningen
+                        enheter = indexes['enheter_by_avd'].get(avd['_id'], [])
+                        for enhet in enheter:
+                            with st.expander(f"📑 {enhet['namn']} - Chef: {enhet.get('chef', 'Ej angiven')}"):
+                                # Visa personer i enheten
+                                enhet_personer = [p for p in cached['personer'] if p.get('enhet_id') == enhet['_id']]
+                                if enhet_personer:
+                                    st.markdown(f"**Antal personer i enheten:** {len(enhet_personer)}")
+                                    
+                                    # Visa arbetsplatser kopplade till enheten
+                                    arbetsplatser = [a for a in cached['arbetsplatser'] 
+                                                   if a.get('enhet_id') == enhet['_id']]
+                                    if arbetsplatser:
+                                        st.markdown("**Arbetsplatser:**")
+                                        for arbetsplats in arbetsplatser:
+                                            st.markdown(f"- 🏢 {arbetsplats['namn']}")
 
-    if not forvaltningar:
-        st.warning("Inga förvaltningar tillagda än")
-        return
-
-    # Skapa dynamiska flikar för varje förvaltning
-    # Detta möjliggör effektiv navigation mellan förvaltningar
-    tabs = st.tabs([f["namn"] for f in forvaltningar])
-
-    # Iterera över alla förvaltningar och skapa detaljvyer
-    for i, tab in enumerate(tabs):
-        with tab:
-            # Sektion för uppdragstäckning
-            # Visar detaljerad status för fackliga roller per enhet
-            with st.expander(f"#{i + 1} Uppdragstäckning"):
-                forv = forvaltningar[i]
-
-                # Hämta och validera avdelningsdata
-                avdelningar = list(db.avdelningar.find({"forvaltning_id": forv["_id"]}))
-
-                if not avdelningar:
-                    st.info(f"Inga avdelningar tillagda för {forv['namn']}")
-                    continue
-
-                # Implementera dynamisk filtrering per avdelning
-                avd_namn = st.selectbox(
-                    "Välj Avdelning",
-                    options=[a["namn"] for a in avdelningar],
-                    key=f"avd_select_{forv['_id']}"
-                )
-
-                vald_avd = next(a for a in avdelningar if a["namn"] == avd_namn)
-
-                # Hämta och validera enhetsdata
-                enheter = list(db.enheter.find({"avdelning_id": vald_avd["_id"]}))
-
-                if not enheter:
-                    st.info(f"Inga enheter tillagda för {avd_namn}")
-                    continue
-
-                # Skapa strukturerad tabell för statuspresentation
-                # Detta ger en tydlig översikt över representation
-                col1, col2, col3, col4, col5 = st.columns(5)
-                with col1:
-                    st.markdown("### Enhet")
-                with col2:
-                    st.markdown("### Visionombud")
-                with col3:
-                    st.markdown("### Skyddsombud")
-                with col4:
-                    st.markdown("### LSG/FSG")
-                with col5:
-                    st.markdown("### CSG")
-
-                st.markdown("---")
-
-                # Iterera över enheter och visa detaljerad status
-                # Sorterar enheter alfabetiskt för konsekvent visning
-                for enhet in sorted(enheter, key=lambda x: x['namn']):
-                    col1, col2, col3, col4, col5 = st.columns(5)
-
-                    with col1:
-                        st.write(enhet['namn'])
-
-                    # Visa Visionombud med status och namn
-                    with col2:
-                        visionombud = list(db.personer.find({
-                            "enhet_id": enhet["_id"],
-                            "visionombud": True
-                        }))
-                        if visionombud:
-                            st.markdown("✅")
-                            for person in visionombud:
-                                st.markdown(f"*{person['namn']}*")
-                        else:
-                            st.markdown("❌")
-
-                    # Visa Skyddsombud med status och namn
-                    with col3:
-                        skyddsombud = list(db.personer.find({
-                            "enhet_id": enhet["_id"],
-                            "skyddsombud": True
-                        }))
-                        if skyddsombud:
-                            st.markdown("✅")
-                            for person in skyddsombud:
-                                st.markdown(f"*{person['namn']}*")
-                        else:
-                            st.markdown("❌")
-
-                    # Visa LSG/FSG-representanter med status, namn och roll
-                    with col4:
-                        lsg_personer = list(db.personer.find({
-                            "enhet_id": enhet["_id"],
-                            "lsg_fsg": True
-                        }))
-                        if lsg_personer:
-                            st.markdown("✅")
-                            for person in lsg_personer:
-                                roll = f" ({person.get('lsg_fsg_roll', 'Okänd roll')})"
-                                st.markdown(f"*{person['namn']}{roll}*")
-                        else:
-                            st.markdown("❌")
-
-                    # Visa CSG-representanter med status, namn och roll
-                    with col5:
-                        csg_personer = list(db.personer.find({
-                            "enhet_id": enhet["_id"],
-                            "csg": True
-                        }))
-                        if csg_personer:
-                            st.markdown("✅")
-                            for person in csg_personer:
-                                roll = f" ({person.get('csg_roll', 'Okänd roll')})"
-                                st.markdown(f"*{person['namn']}{roll}*")
-                        else:
-                            st.markdown("❌")
-                    st.divider()
-
-            # Sektion för styrelser och nämnder
-            # Visar detaljerad information om representation i olika styrelser
-            st.markdown("---")
-            with st.expander(f"Styrelser & Nämnder"):
-                st.subheader("Styrelser och Nämnder")
-
-                # Hämta och gruppera styrelser efter typ
-                boards = list(db.boards.find({"forvaltning_id": forv["_id"]}))
-                if boards:
-                    # Separera styrelser i beställar- och utförarnämnder
-                    bestallar_boards = [b for b in boards if b.get("typ") == "Beställare"]
-                    utforar_boards = [b for b in boards if b.get("typ") == "Utförare"]
-
-                    # Visa beställarnämnder med representanter
-                    if bestallar_boards:
-                        st.markdown("### Beställarnämnder")
-                        for board in bestallar_boards:
-                            st.markdown(f"#### {board['namn']}")
-                            col1, col2 = st.columns(2)
-
-                            # Visa ordinarie ledamöter
-                            with col1:
-                                st.markdown("**Ordinarie:**")
-                                if board.get("ledamoter"):
-                                    for ledamot in board["ledamoter"]:
-                                        st.markdown(f"* {ledamot}")
-                                else:
-                                    st.markdown("*Inga ordinarie representanter*")
-
-                            # Visa ersättare
-                            with col2:
-                                st.markdown("**Ersättare:**")
-                                if board.get("ersattare"):
-                                    for ersattare in board["ersattare"]:
-                                        st.markdown(f"* {ersattare}")
-                                else:
-                                    st.markdown("*Inga ersättare*")
-
-                            st.markdown("---")
-
-                    # Visa utförarnämnder med representanter
-                    if utforar_boards:
-                        st.markdown("### Utförarnämnder")
-                        for board in utforar_boards:
-                            st.markdown(f"#### {board['namn']}")
-                            col1, col2 = st.columns(2)
-
-                            # Visa ordinarie ledamöter
-                            with col1:
-                                st.markdown("**Ordinarie:**")
-                                if board.get("ledamoter"):
-                                    for ledamot in board["ledamoter"]:
-                                        st.markdown(f"* {ledamot}")
-                                else:
-                                    st.markdown("*Inga ordinarie representanter*")
-
-                            # Visa ersättare
-                            with col2:
-                                st.markdown("**Ersättare:**")
-                                if board.get("ersattare"):
-                                    for ersattare in board["ersattare"]:
-                                        st.markdown(f"* {ersattare}")
-                                else:
-                                    st.markdown("*Inga ersättare*")
-
-                            st.markdown("---")
-                else:
-                    st.info("Inga styrelser eller nämnder registrerade för denna förvaltning")
+    with tab2:
+        st.subheader("Sök i organisationen")
+        
+        # Sökfält
+        search_query = st.text_input("🔍 Sök efter person, arbetsplats eller enhet", "").lower()
+        
+        if search_query:
+            # Sök i personer
+            matching_personer = [p for p in cached['personer'] 
+                               if search_query in p.get('namn', '').lower()]
+            
+            # Sök i arbetsplatser
+            matching_arbetsplatser = [a for a in cached['arbetsplatser'] 
+                                    if search_query in a.get('namn', '').lower()]
+            
+            # Sök i enheter
+            matching_enheter = [e for e in cached['enheter'] 
+                              if search_query in e.get('namn', '').lower()]
+            
+            # Visa sökresultat
+            if matching_personer:
+                st.markdown("### Personer")
+                df_personer = pd.DataFrame([{
+                    'Namn': p['namn'],
+                    'Förvaltning': p.get('forvaltning_namn', ''),
+                    'Avdelning': p.get('avdelning_namn', ''),
+                    'Enhet': p.get('enhet_namn', ''),
+                    'Arbetsplats': p.get('arbetsplats', '')
+                } for p in matching_personer])
+                st.dataframe(df_personer, hide_index=True)
+            
+            if matching_arbetsplatser:
+                st.markdown("### Arbetsplatser")
+                df_arbetsplatser = pd.DataFrame([{
+                    'Namn': a['namn'],
+                    'Förvaltning': a.get('forvaltning_namn', ''),
+                    'Adress': f"{a.get('gatuadress', '')}, {a.get('postnummer', '')} {a.get('ort', '')}"
+                } for a in matching_arbetsplatser])
+                st.dataframe(df_arbetsplatser, hide_index=True)
+            
+            if matching_enheter:
+                st.markdown("### Enheter")
+                df_enheter = pd.DataFrame([{
+                    'Namn': e['namn'],
+                    'Förvaltning': e.get('forvaltning_namn', ''),
+                    'Avdelning': e.get('avdelning_namn', ''),
+                    'Chef': e.get('chef', '')
+                } for e in matching_enheter])
+                st.dataframe(df_enheter, hide_index=True)
+            
+            if not (matching_personer or matching_arbetsplatser or matching_enheter):
+                st.info("Inga träffar hittades för din sökning.")
