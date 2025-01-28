@@ -144,7 +144,7 @@ def show(db):
     - Hanterar MIME-type för Excel-filer
     """
     st.header("Exportera Data")
-    
+
     st.markdown("""
     Här kan du exportera all data till en Excel-fil. Filen innehåller:
     - Komplett organisationsstruktur med alla personer och deras roller

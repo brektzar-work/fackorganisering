@@ -103,7 +103,7 @@ def update_cache_after_change(db, collection_name, operation, data=None):
         if collection_name not in st.session_state.cached_data:
             refresh_cache(db)
             return
-            
+
         st.session_state.cached_data[collection_name].append(data)
         # Uppdatera relevanta index
         if collection_name == 'personer':

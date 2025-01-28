@@ -117,7 +117,7 @@ def show(db):
                     'Adress': f"{a.get('gatuadress', '')}, {a.get('postnummer', '')} {a.get('ort', '')}"
                 } for a in matching_arbetsplatser])
                 st.dataframe(df_arbetsplatser, hide_index=True)
-            
+
             if matching_enheter:
                 st.markdown("### Enheter")
                 df_enheter = pd.DataFrame([{

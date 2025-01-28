@@ -20,7 +20,7 @@ def show_first_time_setup(db):
 
     st.markdown("""
     ## Välkommen till Vision Sektion 10!
-    
+     
     Detta är första gången du startar systemet. Vi behöver göra några grundinställningar 
     för att komma igång. Följ stegen nedan för att konfigurera systemet.
     """)
