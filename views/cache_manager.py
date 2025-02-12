@@ -16,7 +16,8 @@ def load_base_data(db):
         'avdelningar': list(db.avdelningar.find()),
         'enheter': list(db.enheter.find()),
         'arbetsplatser': list(db.arbetsplatser.find()),
-        'personer': list(db.personer.find())
+        'personer': list(db.personer.find()),
+        'boards': list(db.boards.find())
     }
 
 
@@ -28,12 +29,14 @@ def create_indexes(data):
         'arbetsplatser_by_forv': defaultdict(list),
         'personer_by_forv': defaultdict(list),
         'personer_by_arbetsplats': defaultdict(list),
+        'boards_by_forv': defaultdict(list),
         'globala_arbetsplatser': [],
         'id_lookup': {
             'forvaltningar': {},
             'avdelningar': {},
             'enheter': {},
-            'arbetsplatser': {}
+            'arbetsplatser': {},
+            'boards': {}
         }
     }
 
@@ -65,6 +68,12 @@ def create_indexes(data):
         if person.get('arbetsplats'):
             for arbetsplats in person['arbetsplats']:
                 indexes['personer_by_arbetsplats'][arbetsplats].append(person)
+
+    # Indexera boards
+    for board in data.get('boards', []):
+        forv_id = board['forvaltning_id']
+        indexes['boards_by_forv'][forv_id].append(board)
+        indexes['id_lookup']['boards'][board['_id']] = board
 
     # Indexera förvaltningar för snabb ID-lookup
     for forv in data['forvaltningar']:

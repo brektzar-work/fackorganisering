@@ -283,41 +283,44 @@ def show(db):
                             st.success("Avdelning tillagd!")
                             st.rerun()
 
+        st.divider()
+
         # Visa befintliga avdelningar per förvaltning
         for forv in forvaltningar:
-            avdelningar = indexes['avdelningar_by_forv'].get(forv["_id"], [])
-            if avdelningar:
-                st.markdown(f"### {forv['namn']}")
-                for avd in avdelningar:
-                    with st.expander(f"{avd['namn']} - Chef: {avd.get('chef', 'Ej angiven')}"):
-                        with st.form(f"edit_avdelning_{avd['_id']}"):
-                            nytt_namn = st.text_input("Namn", value=avd["namn"])
-                            ny_chef = st.text_input("Chef", value=avd.get("chef", ""))
-                            
-                            col1, col2 = st.columns(2)
-                            with col1:
-                                if st.form_submit_button("Spara ändringar"):
-                                    result = db.avdelningar.update_one(
-                                        {"_id": avd["_id"]},
-                                        {"$set": {"namn": nytt_namn, "chef": ny_chef}}
-                                    )
-                                    if result.modified_count > 0:
-                                        update_cache_after_change(db, 'avdelningar', 'update')
-                                        log_action("update", f"Uppdaterade avdelning: {avd['namn']}", "unit")
-                                        st.success("Avdelning uppdaterad!")
-                                        st.rerun()
+            with st.expander(f"{forv['namn']}"):
+                avdelningar = indexes['avdelningar_by_forv'].get(forv["_id"], [])
+                if avdelningar:
+                    st.markdown(f"### {forv['namn']}")
+                    for avd in avdelningar:
+                        with st.expander(f"{avd['namn']} - Chef: {avd.get('chef', 'Ej angiven')}"):
+                            with st.form(f"edit_avdelning_{avd['_id']}"):
+                                nytt_namn = st.text_input("Namn", value=avd["namn"])
+                                ny_chef = st.text_input("Chef", value=avd.get("chef", ""))
 
-                            with col2:
-                                if st.form_submit_button("Ta bort", type="secondary"):
-                                    enheter = indexes['enheter_by_avd'].get(avd["_id"], [])
-                                    if enheter:
-                                        st.error("Kan inte ta bort avdelning som har enheter")
-                                    else:
-                                        db.avdelningar.delete_one({"_id": avd["_id"]})
-                                        update_cache_after_change(db, 'avdelningar', 'delete')
-                                        log_action("delete", f"Tog bort avdelning: {avd['namn']}", "unit")
-                                        st.success("Avdelning borttagen!")
-                                        st.rerun()
+                                col1, col2 = st.columns(2)
+                                with col1:
+                                    if st.form_submit_button("Spara ändringar"):
+                                        result = db.avdelningar.update_one(
+                                            {"_id": avd["_id"]},
+                                            {"$set": {"namn": nytt_namn, "chef": ny_chef}}
+                                        )
+                                        if result.modified_count > 0:
+                                            update_cache_after_change(db, 'avdelningar', 'update')
+                                            log_action("update", f"Uppdaterade avdelning: {avd['namn']}", "unit")
+                                            st.success("Avdelning uppdaterad!")
+                                            st.rerun()
+
+                                with col2:
+                                    if st.form_submit_button("Ta bort", type="secondary"):
+                                        enheter = indexes['enheter_by_avd'].get(avd["_id"], [])
+                                        if enheter:
+                                            st.error("Kan inte ta bort avdelning som har enheter")
+                                        else:
+                                            db.avdelningar.delete_one({"_id": avd["_id"]})
+                                            update_cache_after_change(db, 'avdelningar', 'delete')
+                                            log_action("delete", f"Tog bort avdelning: {avd['namn']}", "unit")
+                                            st.success("Avdelning borttagen!")
+                                            st.rerun()
 
     with tab3:
         st.subheader("Enheter")
@@ -367,42 +370,47 @@ def show(db):
                                 st.success("Enhet tillagd!")
                                 st.rerun()
 
+        st.divider()
+
         # Visa befintliga enheter per förvaltning och avdelning
         for forv in forvaltningar:
-            avdelningar = indexes['avdelningar_by_forv'].get(forv["_id"], [])
-            if avdelningar:
-                st.markdown(f"### {forv['namn']}")
-                for avd in avdelningar:
-                    enheter = indexes['enheter_by_avd'].get(avd["_id"], [])
-                    if enheter:
-                        st.markdown(f"#### &nbsp;&nbsp;&nbsp;&nbsp;{avd['namn']}")
-                        for enhet in enheter:
-                            with st.expander(f"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;{enhet['namn']} - Chef: {enhet.get('chef', 'Ej angiven')}"):
-                                with st.form(f"edit_enhet_{enhet['_id']}"):
-                                    nytt_namn = st.text_input("Namn", value=enhet["namn"])
-                                    ny_chef = st.text_input("Chef", value=enhet.get("chef", ""))
-                                    
-                                    col1, col2 = st.columns(2)
-                                    with col1:
-                                        if st.form_submit_button("Spara ändringar"):
-                                            result = db.enheter.update_one(
-                                                {"_id": enhet["_id"]},
-                                                {"$set": {"namn": nytt_namn, "chef": ny_chef}}
-                                            )
-                                            if result.modified_count > 0:
-                                                update_cache_after_change(db, 'enheter', 'update')
-                                                log_action("update", f"Uppdaterade enhet: {enhet['namn']}", "unit")
-                                                st.success("Enhet uppdaterad!")
-                                                st.rerun()
+            with st.expander(f"{forv['namn']}"):
+                avdelningar = indexes['avdelningar_by_forv'].get(forv["_id"], [])
+                if avdelningar:
+                    st.markdown(f"### {forv['namn']}")
+                    for avd in avdelningar:
+                        with st.expander(f"{avd['namn']}"):
+                            enheter = indexes['enheter_by_avd'].get(avd["_id"], [])
+                            if enheter:
+                                st.markdown(f"#### &nbsp;&nbsp;&nbsp;&nbsp;{avd['namn']}")
+                                for enhet in enheter:
+                                    with st.expander(f"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;{enhet['namn']} - Chef: {enhet.get('chef', 'Ej angiven')}"):
+                                        with st.form(f"edit_enhet_{enhet['_id']}"):
+                                            nytt_namn = st.text_input("Namn", value=enhet["namn"])
+                                            ny_chef = st.text_input("Chef", value=enhet.get("chef", ""))
 
-                                    with col2:
-                                        if st.form_submit_button("Ta bort", type="secondary"):
-                                            personer = indexes['personer_by_forv'].get(forv["_id"], [])
-                                            if any(p["enhet_id"] == enhet["_id"] for p in personer):
-                                                st.error("Kan inte ta bort enhet som har personer")
-                                            else:
-                                                db.enheter.delete_one({"_id": enhet["_id"]})
-                                                update_cache_after_change(db, 'enheter', 'delete')
-                                                log_action("delete", f"Tog bort enhet: {enhet['namn']}", "unit")
-                                                st.success("Enhet borttagen!")
-                                                st.rerun()
+                                            col1, col2 = st.columns(2)
+                                            with col1:
+                                                if st.form_submit_button("Spara ändringar"):
+                                                    result = db.enheter.update_one(
+                                                        {"_id": enhet["_id"]},
+                                                        {"$set": {"namn": nytt_namn, "chef": ny_chef}}
+                                                    )
+                                                    if result.modified_count > 0:
+                                                        update_cache_after_change(db, 'enheter', 'update')
+                                                        log_action("update", f"Uppdaterade enhet: {enhet['namn']}", "unit")
+                                                        st.success("Enhet uppdaterad!")
+                                                        st.rerun()
+
+                                            with col2:
+                                                if st.form_submit_button("Ta bort", type="secondary"):
+                                                    personer = indexes['personer_by_forv'].get(forv["_id"], [])
+                                                    if any(p["enhet_id"] == enhet["_id"] for p in personer):
+                                                        st.error("Kan inte ta bort enhet som har personer")
+                                                    else:
+                                                        db.enheter.delete_one({"_id": enhet["_id"]})
+                                                        update_cache_after_change(db, 'enheter', 'delete')
+                                                        log_action("delete", f"Tog bort enhet: {enhet['namn']}", "unit")
+                                                        st.success("Enhet borttagen!")
+                                                    st.rerun()
+
