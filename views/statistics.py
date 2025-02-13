@@ -387,16 +387,11 @@ def generate_missing_coordinates(db, arbetsplatser):
 
 def show(db):
     """Visar statistik och grafer för organisationen."""
-    st.header("Statistik och Grafer")
+    st.header("Statistik")
 
     # Ladda cachad data
     cached, indexes = get_cached_data(db)
     
-    # Uppdateringsknapp i sidofältet
-    if st.sidebar.button("↻ Uppdatera data", key="refresh_stats"):
-        cached, indexes = get_cached_data(db, force_refresh=True)
-        st.rerun()
-
     # Skapa flikar för olika typer av statistik
     tab1, tab2, tab3, tab4 = st.tabs([
         "Översikt",
@@ -855,14 +850,6 @@ def show(db):
         # Ladda och visa kartan
         arbetsplatser = cached['arbetsplatser']
         personer = cached['personer']
-        
-        # Knapp för att ladda om kartan
-        col1, col2 = st.columns([1, 4])
-        with col1:
-            if st.button("🔄 Ladda om kartan"):
-                # Rensa cache för kartan
-                load_map.clear()
-                st.rerun()
         
         # Visa statistik om arbetsplatser på kartan
         with col2:

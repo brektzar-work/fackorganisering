@@ -28,7 +28,7 @@ Tekniska detaljer:
 - Byggt med Streamlit för användargränssnittet
 - MongoDB som databas för flexibel datalagring
 - Implementerar säker autentisering och auktorisering
-- Använder cachning för optimerad prestanda
+- Använder cacheing för optimerad prestanda
 """
 
 import streamlit as st
@@ -122,9 +122,20 @@ def main():
     # Hantera användarinformation och utloggning i sidofältet
     with st.sidebar:
         st.write(f"Inloggad som: {st.session_state.username}")
-        if st.button("Logga ut"):
-            logout()
-            st.rerun()
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("Logga ut"):
+                logout()
+                st.rerun()
+        with col2:
+            if st.button("↻ Uppdatera data", help="Uppdatera all data från databasen"):
+                # Force refresh of cached data
+                if 'cached_data' in st.session_state:
+                    del st.session_state.cached_data
+                if 'cached_indexes' in st.session_state:
+                    del st.session_state.cached_indexes
+                st.session_state.needs_recalculation = True
+                st.rerun()
 
     # Tillhandahåll användarguide i expanderbart sidofält
     with st.sidebar.expander("📋 Kort Guide för Vision Organisationsöversikt"):

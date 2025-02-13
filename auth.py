@@ -190,7 +190,7 @@ def login(db, username, password):
         st.session_state.authenticated = True
         st.session_state.user_role = user['role']
         st.session_state.username = username
-        st.session_state.is_admin = (user['role'] == 'admin')
+        st.session_state.is_admin = user['role'].lower() == 'admin'
         
         # Logga lyckad inloggning
         log_action("login", f"Användare {username} loggade in", "auth")

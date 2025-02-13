@@ -198,6 +198,9 @@ def show(db):
            - enheter
            - personer
     """
+    # Ladda cachad data
+    cached, indexes = get_cached_data(db)
+    
     st.header("Hantera Arbetsplatser")
 
     # Initiera session state variabler
@@ -214,17 +217,9 @@ def show(db):
     if 'redigering_enhet' not in st.session_state:
         st.session_state.redigering_enhet = {}
 
-    # Ladda cachad data
-    cached, indexes = get_cached_data(db)
-
     # Uppdatera session state med cachad data
     st.session_state.arbetsplatser = cached['arbetsplatser']
     st.session_state.forvaltningar = cached['forvaltningar']
-
-    # Uppdateringsknapp i sidofältet
-    if st.sidebar.button("↻ Uppdatera data", key="refresh_workplaces_sidebar"):
-        cached, indexes = get_cached_data(db, force_refresh=True)
-        st.rerun()
 
     # Huvudflikar för separation av funktionalitet
     tab1, tab2 = st.tabs(["Hantera Arbetsplatser", "Hantera Medlemsantal"])
@@ -560,7 +555,7 @@ def show(db):
                     db.avdelningar.find({"forvaltning_id": forv["_id"]})
                 )
 
-        # Cache enheter per avdelning
+        # Cachea enheter per avdelning
         # Kompletterar den hierarkiska strukturen för komplett organisationsträd
         if 'enheter_per_avdelning' not in st.session_state:
             st.session_state.enheter_per_avdelning = {}

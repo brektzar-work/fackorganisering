@@ -50,7 +50,7 @@ def show_login(db):
                     db.users.insert_one({
                         "username": username,
                         "password": hash_password(password),
-                        "role": "Admin"
+                        "role": "admin"
                     })
                     log_action("create", f"Skapade administratörskonto: {username}", "admin")
                     st.success("Administratörskonto skapat! Du kan nu logga in.")
@@ -84,6 +84,8 @@ def show_login(db):
             st.session_state.authenticated = True
             st.session_state.username = username
             st.session_state.role = user.get("role", "Användare")
+            # Set is_admin flag based on role
+            st.session_state.is_admin = user.get("role", "").lower() == "admin"
             
             # Logga lyckad inloggning
             log_action("login", f"Lyckad inloggning för användare: {username}", "auth")

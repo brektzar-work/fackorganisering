@@ -23,6 +23,7 @@ import streamlit as st
 from views.custom_logging import log_action, current_time
 from pymongo import UpdateOne
 from views.cache_manager import get_cached_data, update_cache_after_change
+from bson.objectid import ObjectId
 
 
 def calculate_member_counts(db):
@@ -149,6 +150,31 @@ def calculate_member_counts(db):
     st.session_state.needs_recalculation = False
 
 
+def fix_missing_forvaltning_ids(db, cached_data):
+    """Fix missing forvaltning_id in enheter by looking up the ID from forvaltning_namn"""
+    # Create lookup dictionary for förvaltning names to IDs
+    forv_name_to_id = {f['namn']: f['_id'] for f in cached_data['forvaltningar']}
+    
+    # Find enheter missing forvaltning_id but having forvaltning_namn
+    enheter_to_fix = [e for e in cached_data['enheter'] 
+                     if not e.get('forvaltning_id') and e.get('forvaltning_namn')]
+    
+    for enhet in enheter_to_fix:
+        if enhet['forvaltning_namn'] in forv_name_to_id:
+            forv_id = forv_name_to_id[enhet['forvaltning_namn']]
+            # Update the enhet with the correct forvaltning_id
+            db.enheter.update_one(
+                {"_id": enhet["_id"]},
+                {"$set": {"forvaltning_id": forv_id}}
+            )
+            # Also update any associated arbetsplatser
+            if enhet.get('arbetsplatser'):
+                db.arbetsplatser.update_many(
+                    {"_id": {"$in": [ObjectId(ap_id) for ap_id in enhet['arbetsplatser']]}},
+                    {"$set": {"forvaltning_id": forv_id}}
+                )
+
+
 def show(db):
     """Visar och hanterar gränssnittet för organisationsstrukturen.
     
@@ -184,10 +210,8 @@ def show(db):
     # Ladda cachad data
     cached, indexes = get_cached_data(db)
     
-    # Uppdateringsknapp i sidofältet
-    if st.sidebar.button("↻ Uppdatera data", key="refresh_units"):
-        cached, indexes = get_cached_data(db, force_refresh=True)
-        st.rerun()
+    # Fix any missing forvaltning_ids
+    fix_missing_forvaltning_ids(db, cached)
 
     # Huvudflikar för separation av funktionalitet
     tab1, tab2, tab3 = st.tabs(["Förvaltningar", "Avdelningar", "Enheter"])
@@ -251,166 +275,267 @@ def show(db):
 
     with tab2:
         st.subheader("Avdelningar")
-
+        
         # Lägg till avdelning
         with st.expander("Lägg till Avdelning"):
             with st.form("add_avdelning"):
-                if not forvaltningar:
-                    st.warning("Lägg till minst en förvaltning först")
-                else:
-                    forv_namn = st.selectbox(
-                        "Förvaltning",
-                        options=[f["namn"] for f in forvaltningar]
-                    )
+                forvaltning = st.selectbox(
+                    "Välj Förvaltning",
+                    options=forvaltningar,
+                    format_func=lambda x: x['namn']
+                )
+                
+                if forvaltning:
                     namn = st.text_input("Avdelningsnamn")
                     chef = st.text_input("Avdelningschef")
                     submitted = st.form_submit_button("Lägg till Avdelning")
 
-                    if submitted and namn and forv_namn:
-                        vald_forv = next(f for f in forvaltningar if f["namn"] == forv_namn)
+                    if submitted and namn:
                         avdelning = {
                             "namn": namn,
                             "chef": chef,
-                            "forvaltning_id": vald_forv["_id"],
-                            "forvaltning_namn": vald_forv["namn"],
+                            "forvaltning_id": forvaltning["_id"],
+                            "forvaltning_namn": forvaltning["namn"],
                             "beraknat_medlemsantal": 0
                         }
                         result = db.avdelningar.insert_one(avdelning)
                         if result.inserted_id:
                             avdelning['_id'] = result.inserted_id
                             update_cache_after_change(db, 'avdelningar', 'create', avdelning)
-                            log_action("create", f"Skapade avdelning: {namn} under {forv_namn}", "unit")
+                            log_action("create", f"Skapade avdelning: {namn} under {forvaltning['namn']}", "unit")
                             st.success("Avdelning tillagd!")
                             st.rerun()
 
-        st.divider()
-
-        # Visa befintliga avdelningar per förvaltning
+        # Visa befintliga avdelningar
         for forv in forvaltningar:
-            with st.expander(f"{forv['namn']}"):
-                avdelningar = indexes['avdelningar_by_forv'].get(forv["_id"], [])
-                if avdelningar:
-                    st.markdown(f"### {forv['namn']}")
-                    for avd in avdelningar:
-                        with st.expander(f"{avd['namn']} - Chef: {avd.get('chef', 'Ej angiven')}"):
-                            with st.form(f"edit_avdelning_{avd['_id']}"):
-                                nytt_namn = st.text_input("Namn", value=avd["namn"])
-                                ny_chef = st.text_input("Chef", value=avd.get("chef", ""))
+            avdelningar = indexes['avdelningar_by_forv'].get(forv["_id"], [])
+            if avdelningar:
+                st.markdown(f"### {forv['namn']}")
+                for avd in avdelningar:
+                    with st.expander(f"{avd['namn']} - Chef: {avd.get('chef', 'Ej angiven')}"):
+                        with st.form(f"edit_avdelning_{avd['_id']}"):
+                            nytt_namn = st.text_input("Namn", value=avd["namn"])
+                            ny_chef = st.text_input("Chef", value=avd.get("chef", ""))
+                            ny_forvaltning = st.selectbox(
+                                "Förvaltning",
+                                options=forvaltningar,
+                                format_func=lambda x: x['namn'],
+                                index=next((i for i, f in enumerate(forvaltningar) 
+                                          if str(f["_id"]) == str(avd["forvaltning_id"])), 0)
+                            )
+                            
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                if st.form_submit_button("Spara ändringar"):
+                                    result = db.avdelningar.update_one(
+                                        {"_id": avd["_id"]},
+                                        {"$set": {
+                                            "namn": nytt_namn,
+                                            "chef": ny_chef,
+                                            "forvaltning_id": ny_forvaltning["_id"],
+                                            "forvaltning_namn": ny_forvaltning["namn"]
+                                        }}
+                                    )
+                                    if result.modified_count > 0:
+                                        update_cache_after_change(db, 'avdelningar', 'update')
+                                        log_action("update", f"Uppdaterade avdelning: {avd['namn']}", "unit")
+                                        st.success("Avdelning uppdaterad!")
+                                        st.rerun()
 
-                                col1, col2 = st.columns(2)
-                                with col1:
-                                    if st.form_submit_button("Spara ändringar"):
-                                        result = db.avdelningar.update_one(
-                                            {"_id": avd["_id"]},
-                                            {"$set": {"namn": nytt_namn, "chef": ny_chef}}
-                                        )
-                                        if result.modified_count > 0:
-                                            update_cache_after_change(db, 'avdelningar', 'update')
-                                            log_action("update", f"Uppdaterade avdelning: {avd['namn']}", "unit")
-                                            st.success("Avdelning uppdaterad!")
-                                            st.rerun()
-
-                                with col2:
-                                    if st.form_submit_button("Ta bort", type="secondary"):
-                                        enheter = indexes['enheter_by_avd'].get(avd["_id"], [])
-                                        if enheter:
-                                            st.error("Kan inte ta bort avdelning som har enheter")
-                                        else:
-                                            db.avdelningar.delete_one({"_id": avd["_id"]})
-                                            update_cache_after_change(db, 'avdelningar', 'delete')
-                                            log_action("delete", f"Tog bort avdelning: {avd['namn']}", "unit")
-                                            st.success("Avdelning borttagen!")
-                                            st.rerun()
+                            with col2:
+                                if st.form_submit_button("Ta bort", type="secondary"):
+                                    enheter = indexes['enheter_by_avd'].get(avd["_id"], [])
+                                    if enheter:
+                                        st.error("Kan inte ta bort avdelning som har enheter")
+                                    else:
+                                        db.avdelningar.delete_one({"_id": avd["_id"]})
+                                        update_cache_after_change(db, 'avdelningar', 'delete')
+                                        log_action("delete", f"Tog bort avdelning: {avd['namn']}", "unit")
+                                        st.success("Avdelning borttagen!")
+                                        st.rerun()
 
     with tab3:
         st.subheader("Enheter")
-
+        
         # Lägg till enhet
         with st.expander("Lägg till Enhet"):
             with st.form("add_enhet"):
-                if not forvaltningar:
-                    st.warning("Lägg till minst en förvaltning och avdelning först")
-                else:
-                    forv_namn = st.selectbox(
-                        "Förvaltning",
-                        options=[f["namn"] for f in forvaltningar],
-                        key="forv_select_new_enhet"
+                forvaltning = st.selectbox(
+                    "Välj Förvaltning",
+                    options=forvaltningar,
+                    format_func=lambda x: x['namn'],
+                    key="add_enhet_forv"
+                )
+                
+                if forvaltning:
+                    avdelningar = indexes['avdelningar_by_forv'].get(forvaltning["_id"], [])
+                    avdelning = st.selectbox(
+                        "Välj Avdelning",
+                        options=avdelningar,
+                        format_func=lambda x: x['namn']
                     )
-                    vald_forv = next(f for f in forvaltningar if f["namn"] == forv_namn)
                     
-                    avdelningar = indexes['avdelningar_by_forv'].get(vald_forv["_id"], [])
-                    if not avdelningar:
-                        st.warning("Lägg till minst en avdelning i vald förvaltning först")
-                    else:
-                        avd_namn = st.selectbox(
-                            "Avdelning",
-                            options=[a["namn"] for a in avdelningar]
-                        )
-                        vald_avd = next(a for a in avdelningar if a["namn"] == avd_namn)
-                        
+                    if avdelning:
                         namn = st.text_input("Enhetsnamn")
                         chef = st.text_input("Enhetschef")
+                        
+                        # Get available arbetsplatser for this förvaltning
+                        available_arbetsplatser = [ap for ap in cached['arbetsplatser'] 
+                                                 if (not ap.get('alla_forvaltningar') and 
+                                                     str(ap.get('forvaltning_id')) == str(forvaltning["_id"])) or
+                                                 ap.get('alla_forvaltningar', False)]
+                        
+                        selected_arbetsplatser = st.multiselect(
+                            "Välj Arbetsplatser",
+                            options=available_arbetsplatser,
+                            format_func=lambda x: f"{x['namn']} {'(Regional)' if x.get('alla_forvaltningar') else ''}"
+                        )
+                        
                         submitted = st.form_submit_button("Lägg till Enhet")
 
                         if submitted and namn:
+                            # Convert selected arbetsplatser to list of IDs
+                            arbetsplats_ids = [str(ap["_id"]) for ap in selected_arbetsplatser]
+                            
                             enhet = {
                                 "namn": namn,
                                 "chef": chef,
-                                "avdelning_id": vald_avd["_id"],
-                                "avdelning_namn": vald_avd["namn"],
-                                "forvaltning_id": vald_forv["_id"],
-                                "forvaltning_namn": vald_forv["namn"],
+                                "avdelning_id": avdelning["_id"],
+                                "avdelning_namn": avdelning["namn"],
+                                "forvaltning_id": forvaltning["_id"],
+                                "forvaltning_namn": forvaltning["namn"],
+                                "arbetsplatser": arbetsplats_ids,
                                 "beraknat_medlemsantal": 0
                             }
                             result = db.enheter.insert_one(enhet)
                             if result.inserted_id:
                                 enhet['_id'] = result.inserted_id
+                                # Update arbetsplatser with enhet reference
+                                for ap in selected_arbetsplatser:
+                                    db.arbetsplatser.update_one(
+                                        {"_id": ap["_id"]},
+                                        {"$set": {
+                                            "enhet_id": result.inserted_id,
+                                            "forvaltning_id": forvaltning["_id"],
+                                            "forvaltning_namn": forvaltning["namn"]
+                                        }}
+                                    )
                                 update_cache_after_change(db, 'enheter', 'create', enhet)
-                                log_action("create", f"Skapade enhet: {namn} under {avd_namn}", "unit")
+                                update_cache_after_change(db, 'arbetsplatser', 'update')
+                                log_action("create", f"Skapade enhet: {namn} under {avdelning['namn']}", "unit")
                                 st.success("Enhet tillagd!")
                                 st.rerun()
 
-        st.divider()
-
-        # Visa befintliga enheter per förvaltning och avdelning
+        # Visa befintliga enheter
         for forv in forvaltningar:
-            with st.expander(f"{forv['namn']}"):
-                avdelningar = indexes['avdelningar_by_forv'].get(forv["_id"], [])
-                if avdelningar:
-                    st.markdown(f"### {forv['namn']}")
-                    for avd in avdelningar:
-                        with st.expander(f"{avd['namn']}"):
-                            enheter = indexes['enheter_by_avd'].get(avd["_id"], [])
-                            if enheter:
-                                st.markdown(f"#### &nbsp;&nbsp;&nbsp;&nbsp;{avd['namn']}")
-                                for enhet in enheter:
-                                    with st.expander(f"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;{enhet['namn']} - Chef: {enhet.get('chef', 'Ej angiven')}"):
-                                        with st.form(f"edit_enhet_{enhet['_id']}"):
-                                            nytt_namn = st.text_input("Namn", value=enhet["namn"])
-                                            ny_chef = st.text_input("Chef", value=enhet.get("chef", ""))
-
-                                            col1, col2 = st.columns(2)
-                                            with col1:
-                                                if st.form_submit_button("Spara ändringar"):
-                                                    result = db.enheter.update_one(
-                                                        {"_id": enhet["_id"]},
-                                                        {"$set": {"namn": nytt_namn, "chef": ny_chef}}
+            avdelningar = indexes['avdelningar_by_forv'].get(forv["_id"], [])
+            if avdelningar:
+                st.markdown(f"### {forv['namn']}")
+                for avd in avdelningar:
+                    enheter = indexes['enheter_by_avd'].get(avd["_id"], [])
+                    if enheter:
+                        st.markdown(f"#### {avd['namn']}")
+                        for enhet in enheter:
+                            # Get current arbetsplatser for this enhet
+                            current_arbetsplats_ids = set(enhet.get('arbetsplatser', []))
+                            
+                            with st.expander(f"{enhet['namn']} - Chef: {enhet.get('chef', 'Ej angiven')}"):
+                                with st.form(f"edit_enhet_{enhet['_id']}"):
+                                    nytt_namn = st.text_input("Namn", value=enhet["namn"])
+                                    ny_chef = st.text_input("Chef", value=enhet.get("chef", ""))
+                                    
+                                    ny_forvaltning = st.selectbox(
+                                        "Förvaltning",
+                                        options=forvaltningar,
+                                        format_func=lambda x: x['namn'],
+                                        index=next((i for i, f in enumerate(forvaltningar) 
+                                                  if str(f["_id"]) == str(enhet["forvaltning_id"])), 0),
+                                        key=f"edit_enhet_forv_{enhet['_id']}"
+                                    )
+                                    
+                                    if ny_forvaltning:
+                                        avdelningar = indexes['avdelningar_by_forv'].get(ny_forvaltning["_id"], [])
+                                        ny_avdelning = st.selectbox(
+                                            "Avdelning",
+                                            options=avdelningar,
+                                            format_func=lambda x: x['namn'],
+                                            index=next((i for i, a in enumerate(avdelningar) 
+                                                      if str(a["_id"]) == str(enhet["avdelning_id"])), 0)
+                                        )
+                                        
+                                        # Get available arbetsplatser for this förvaltning
+                                        available_arbetsplatser = [ap for ap in cached['arbetsplatser'] 
+                                                                 if (not ap.get('alla_forvaltningar') and 
+                                                                     str(ap.get('forvaltning_id')) == str(ny_forvaltning["_id"])) or
+                                                                 ap.get('alla_forvaltningar', False)]
+                                        
+                                        # Get current arbetsplatser based on the arbetsplatser list in enhet
+                                        current_arbetsplatser = [ap for ap in available_arbetsplatser 
+                                                               if str(ap["_id"]) in current_arbetsplats_ids]
+                                        
+                                        selected_arbetsplatser = st.multiselect(
+                                            "Arbetsplatser",
+                                            options=available_arbetsplatser,
+                                            default=current_arbetsplatser,
+                                            format_func=lambda x: f"{x['namn']} {'(Regional)' if x.get('alla_forvaltningar') else ''}"
+                                        )
+                                        
+                                        col1, col2 = st.columns(2)
+                                        with col1:
+                                            if st.form_submit_button("Spara ändringar"):
+                                                # Remove enhet_id from previously associated arbetsplatser
+                                                db.arbetsplatser.update_many(
+                                                    {"enhet_id": enhet["_id"]},
+                                                    {"$unset": {"enhet_id": ""}}
+                                                )
+                                                
+                                                # Convert selected arbetsplatser to list of IDs
+                                                arbetsplats_ids = [str(ap["_id"]) for ap in selected_arbetsplatser]
+                                                
+                                                # Update the enhet
+                                                result = db.enheter.update_one(
+                                                    {"_id": enhet["_id"]},
+                                                    {"$set": {
+                                                        "namn": nytt_namn,
+                                                        "chef": ny_chef,
+                                                        "avdelning_id": ny_avdelning["_id"],
+                                                        "avdelning_namn": ny_avdelning["namn"],
+                                                        "forvaltning_id": ny_forvaltning["_id"],
+                                                        "forvaltning_namn": ny_forvaltning["namn"],
+                                                        "arbetsplatser": arbetsplats_ids
+                                                    }}
+                                                )
+                                                
+                                                # Update new arbetsplatser with enhet reference
+                                                for ap in selected_arbetsplatser:
+                                                    db.arbetsplatser.update_one(
+                                                        {"_id": ap["_id"]},
+                                                        {"$set": {
+                                                            "enhet_id": enhet["_id"],
+                                                            "forvaltning_id": ny_forvaltning["_id"],
+                                                            "forvaltning_namn": ny_forvaltning["namn"]
+                                                        }}
                                                     )
-                                                    if result.modified_count > 0:
-                                                        update_cache_after_change(db, 'enheter', 'update')
-                                                        log_action("update", f"Uppdaterade enhet: {enhet['namn']}", "unit")
-                                                        st.success("Enhet uppdaterad!")
-                                                        st.rerun()
-
-                                            with col2:
-                                                if st.form_submit_button("Ta bort", type="secondary"):
-                                                    personer = indexes['personer_by_forv'].get(forv["_id"], [])
-                                                    if any(p["enhet_id"] == enhet["_id"] for p in personer):
-                                                        st.error("Kan inte ta bort enhet som har personer")
-                                                    else:
-                                                        db.enheter.delete_one({"_id": enhet["_id"]})
-                                                        update_cache_after_change(db, 'enheter', 'delete')
-                                                        log_action("delete", f"Tog bort enhet: {enhet['namn']}", "unit")
-                                                        st.success("Enhet borttagen!")
+                                                
+                                                if result.modified_count > 0:
+                                                    update_cache_after_change(db, 'enheter', 'update')
+                                                    update_cache_after_change(db, 'arbetsplatser', 'update')
+                                                    log_action("update", f"Uppdaterade enhet: {enhet['namn']}", "unit")
+                                                    st.success("Enhet uppdaterad!")
                                                     st.rerun()
+
+                                        with col2:
+                                            if st.form_submit_button("Ta bort", type="secondary"):
+                                                # Remove enhet_id from associated arbetsplatser
+                                                db.arbetsplatser.update_many(
+                                                    {"enhet_id": enhet["_id"]},
+                                                    {"$unset": {"enhet_id": ""}}
+                                                )
+                                                
+                                                db.enheter.delete_one({"_id": enhet["_id"]})
+                                                update_cache_after_change(db, 'enheter', 'delete')
+                                                update_cache_after_change(db, 'arbetsplatser', 'update')
+                                                log_action("delete", f"Tog bort enhet: {enhet['namn']}", "unit")
+                                                st.success("Enhet borttagen!")
+                                                st.rerun()
 

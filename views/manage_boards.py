@@ -41,11 +41,6 @@ def show(db):
     # Ladda cachad data
     cached, indexes = get_cached_data(db)
     
-    # Uppdateringsknapp i sidofältet
-    if st.sidebar.button("↻ Uppdatera data", key="refresh_boards"):
-        cached, indexes = get_cached_data(db, force_refresh=True)
-        st.rerun()
-
     # Lägg till ny styrelse/nämnd
     with st.expander("Lägg till Styrelse/Nämnd"):
         with st.form("add_board"):

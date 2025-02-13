@@ -126,11 +126,15 @@ def log_action(action, description, category):
         if not hasattr(db, "logs"):
             raise AttributeError("Database object does not have a 'logs' attribute")
 
+        # Get the current username from session state
+        username = st.session_state.get('username', 'System')
+
         log_entry = {
             'action': action,
             'description': description,
             'category': category,
-            'timestamp': current_time()
+            'timestamp': current_time(),
+            'username': username  # Add username to log entry
         }
 
         # Spara till databasen och logga resultatet

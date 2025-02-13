@@ -15,15 +15,12 @@ def show(db):
     Args:
         db: MongoDB-databasanslutning för personer och organisationsdata.
     """
-    st.header("Hantera Personer")
-
     # Ladda cachad data
     cached, indexes = get_cached_data(db)
     
-    # Uppdateringsknapp i sidofältet
-    if st.sidebar.button("↻ Uppdatera data", key="refresh_people"):
-        cached, indexes = get_cached_data(db, force_refresh=True)
-        st.rerun()
+    st.header("Hantera Personer")
+    
+    # Visa personer per förvaltning
 
     # Initiera session state
     if 'ny_arbetsplats' not in st.session_state:

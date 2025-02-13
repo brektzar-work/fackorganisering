@@ -28,15 +28,10 @@ from views.cache_manager import get_cached_data, update_cache_after_change
 
 def show(db):
     """Visar översikt över organisationen."""
-    st.header("Översikt")
-
     # Ladda cachad data
     cached, indexes = get_cached_data(db)
     
-    # Uppdateringsknapp i sidofältet
-    if st.sidebar.button("↻ Uppdatera data", key="refresh_overview"):
-        cached, indexes = get_cached_data(db, force_refresh=True)
-        st.rerun()
+    st.header("Översikt")
 
     # Skapa flikar för olika vyer
     tab1, tab2 = st.tabs(["Organisationsstruktur", "Sökfunktion"])
