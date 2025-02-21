@@ -42,200 +42,119 @@ KOMMUNER = [
 ]
 
 
-def migrate_existing_workplaces(db):
-    """Migrerar existerande arbetsplatsdata till det nya formatet.
-    
-    Denna komplexa funktion utför följande steg:
-    1. Samlar alla unika arbetsplatser från persondatabasen
-    2. Identifierar arbetsplatser som finns i flera förvaltningar
-    3. Skapar nya arbetsplatsposter med korrekt struktur:
-       - Regionala arbetsplatser för de som finns i flera förvaltningar
-       - Förvaltningsspecifika för övriga
-    
-    Tekniska detaljer:
-    - Använder defaultdict för effektiv gruppering
-    - Implementerar upsert för att undvika dubletter
-    - Hanterar relationer mellan arbetsplatser och förvaltningar
-    
-    Args:
-        db: MongoDB-databasanslutning med collections för:
-           - personer
-           - arbetsplatser
-           - forvaltningar
+def migrate_workplaces(db):
+    """
+    Migrerar arbetsplatser från persondata till egen collection.
+    Identifierar och skapar regionala arbetsplatser.
     """
     # Hämta alla unika arbetsplatser från personer
-    personer = list(db.personer.find())
     existing_workplaces = defaultdict(set)  # förvaltning_id -> set of arbetsplatser
-
+    
     # Samla alla unika arbetsplatser per förvaltning
     # Använder set för att automatiskt eliminera dubletter
-    for person in personer:
-        if person.get('arbetsplatser'):
-            for arbetsplats in person['arbetsplatser']:
-                existing_workplaces[person['forvaltning_id']].add(arbetsplats)
-
+    for person in db.personer.find():
+        if person.get('arbetsplats'):
+            for ap in person['arbetsplats']:
+                existing_workplaces[str(person['forvaltning_id'])].add(ap)
+    
     # Kontrollera om arbetsplatser redan har migrerats
     # Detta förhindrar dubbelmigrering av data
-    if db.arbetsplatser.count_documents({}) == 0:
-        # Iterera över alla förvaltningar och deras arbetsplatser
-        for forvaltning_id, arbetsplatser in existing_workplaces.items():
-            forvaltning = db.forvaltningar.find_one({"_id": forvaltning_id})
-
-            for arbetsplats in arbetsplatser:
-                # Identifiera arbetsplatser som finns i flera förvaltningar
-                forvaltningar_med_samma_arbetsplats = [
-                    forv_id for forv_id, arb_set in existing_workplaces.items()
-                    if arbetsplats in arb_set
-                ]
-
-                # Om arbetsplatsen finns i flera förvaltningar, gör den regional
-                if len(forvaltningar_med_samma_arbetsplats) > 1:
-                    db.arbetsplatser.update_one(
-                        {"namn": arbetsplats},
-                        {
-                            "$set": {
-                                "namn": arbetsplats,
-                                "alla_forvaltningar": True,
-                                "forvaltning_id": None,
-                                "forvaltning_namn": "Alla förvaltningar"
-                            }
-                        },
-                        upsert=True
-                    )
-                else:
-                    # Koppla arbetsplatsen till specifik förvaltning
-                    db.arbetsplatser.update_one(
-                        {"namn": arbetsplats, "forvaltning_id": forvaltning_id},
-                        {
-                            "$set": {
-                                "namn": arbetsplats,
-                                "alla_forvaltningar": False,
-                                "forvaltning_id": forvaltning_id,
-                                "forvaltning_namn": forvaltning["namn"]
-                            }
-                        },
-                        upsert=True
-                    )
+    if db.arbetsplatser.count_documents({}) > 0:
+        return
+    
+    # Iterera över alla förvaltningar och deras arbetsplatser
+    for forv_id, arbetsplatser in existing_workplaces.items():
+        forvaltning = db.forvaltningar.find_one({"_id": ObjectId(forv_id)})
+        
+        # Identifiera arbetsplatser som finns i flera förvaltningar
+        for ap_namn in arbetsplatser:
+            ap_count = sum(1 for f_id, aps in existing_workplaces.items() if ap_namn in aps)
+            
+            # Om arbetsplatsen finns i flera förvaltningar, gör den regional
+            if ap_count > 1:
+                if not db.arbetsplatser.find_one({"namn": ap_namn}):
+                    db.arbetsplatser.insert_one({
+                        "namn": ap_namn,
+                        "alla_forvaltningar": True
+                    })
+            else:
+                # Koppla arbetsplatsen till specifik förvaltning
+                if not db.arbetsplatser.find_one({"namn": ap_namn}):
+                    db.arbetsplatser.insert_one({
+                        "namn": ap_namn,
+                        "forvaltning_id": ObjectId(forv_id),
+                        "forvaltning_namn": forvaltning["namn"]
+                    })
 
 
-def load_cached_data(db):
-    """Laddar och cachar data för att minska databasanrop"""
-    if 'workplace_cached_data' not in st.session_state:
-        st.session_state.workplace_cached_data = {
-            'forvaltningar': list(db.forvaltningar.find()),
-            'avdelningar': list(db.avdelningar.find()),
-            'enheter': list(db.enheter.find()),
-            'arbetsplatser': list(db.arbetsplatser.find()),
-            'personer': list(db.personer.find())
-        }
-
-        # Skapa index för snabbare uppslag
-        st.session_state.workplace_indexes = {
-            'avdelningar_by_forv': {},
-            'enheter_by_avd': {},
-            'personer_by_arbetsplats': defaultdict(list)
-        }
-
-        # Indexera avdelningar per förvaltning
-        for avd in st.session_state.workplace_cached_data['avdelningar']:
-            forv_id = avd['forvaltning_id']
-            if forv_id not in st.session_state.workplace_indexes['avdelningar_by_forv']:
-                st.session_state.workplace_indexes['avdelningar_by_forv'][forv_id] = []
-            st.session_state.workplace_indexes['avdelningar_by_forv'][forv_id].append(avd)
-
-        # Indexera enheter per avdelning
-        for enhet in st.session_state.workplace_cached_data['enheter']:
-            avd_id = enhet['avdelning_id']
-            if avd_id not in st.session_state.workplace_indexes['enheter_by_avd']:
-                st.session_state.workplace_indexes['enheter_by_avd'][avd_id] = []
-            st.session_state.workplace_indexes['enheter_by_avd'][avd_id].append(enhet)
-
-        # Indexera personer per arbetsplats
-        for person in st.session_state.workplace_cached_data['personer']:
-            if person.get('arbetsplats'):
-                for arbetsplats in person['arbetsplats']:
-                    st.session_state.workplace_indexes['personer_by_arbetsplats'][arbetsplats].append(person)
-
-
-def refresh_workplace_cache(db):
-    """Uppdaterar cachad data"""
-    if 'workplace_cached_data' in st.session_state:
-        del st.session_state.workplace_cached_data
-    if 'workplace_indexes' in st.session_state:
-        del st.session_state.workplace_indexes
-    load_cached_data(db)
+def create_indexes(db):
+    """
+    Skapar index för snabbare sökningar i databasen.
+    """
+    # Skapa index för snabbare uppslag
+    db.arbetsplatser.create_index([("namn", 1)], unique=True)
+    db.arbetsplatser.create_index([("forvaltning_id", 1)])
+    db.arbetsplatser.create_index([("alla_forvaltningar", 1)])
+    
+    # Indexera avdelningar per förvaltning
+    db.avdelningar.create_index([("forvaltning_id", 1)])
+    db.avdelningar.create_index([("namn", 1), ("forvaltning_id", 1)], unique=True)
+    
+    # Indexera enheter per avdelning
+    db.enheter.create_index([("avdelning_id", 1)])
+    db.enheter.create_index([("forvaltning_id", 1)])
+    db.enheter.create_index([("namn", 1), ("avdelning_id", 1)], unique=True)
+    
+    # Indexera personer per arbetsplats
+    db.personer.create_index([("arbetsplats", 1)])
+    db.personer.create_index([("forvaltning_id", 1)])
+    db.personer.create_index([("avdelning_id", 1)])
+    db.personer.create_index([("enhet_id", 1)])
 
 
 def show(db):
-    """Visar och hanterar huvudgränssnittet för arbetsplatshantering.
-    
-    Denna komplexa funktion hanterar tre huvudområden:
-    1. Datahämtning och Cachning
-       - Implementerar effektiv cachning via session state
-       - Tillhandahåller uppdateringsmekanism för data
-    
-    2. Arbetsplatshantering (Tab 1)
-       - Skapar nya arbetsplatser (regionala eller förvaltningsspecifika)
-       - Hanterar adressinformation och geografiska koordinater
-       - Validerar indata och förhindrar dubletter
-    
-    3. Medlemshantering (Tab 2)
-       - Visar och uppdaterar medlemsantal
-       - Hanterar medlemsfördelning mellan enheter
-       - Beräknar statistik och summor
-    
-    Tekniska detaljer:
-    - Använder Streamlit för UI-komponenter
-    - Implementerar formulärvalidering
-    - Hanterar MongoDB-operationer
-    - Tillhandahåller realtidsuppdateringar
-    
-    Args:
-        db: MongoDB-databasanslutning med tillgång till collections för:
-           - forvaltningar
-           - arbetsplatser
-           - avdelningar
-           - enheter
-           - personer
+    """
+    Visar och hanterar gränssnittet för arbetsplatser.
+    Hanterar både regionala och förvaltningsspecifika arbetsplatser.
     """
     # Ladda cachad data
     cached, indexes = get_cached_data(db)
     
-    st.header("Hantera Arbetsplatser")
-
     # Initiera session state variabler
-    if 'arbetsplatser' not in st.session_state:
-        st.session_state.arbetsplatser = []
-    if 'forvaltningar' not in st.session_state:
-        st.session_state.forvaltningar = []
-    if 'ny_arbetsplats' not in st.session_state:
-        st.session_state.ny_arbetsplats = False
-    if 'redigering_forvaltning' not in st.session_state:
-        st.session_state.redigering_forvaltning = {}
-    if 'redigering_avdelning' not in st.session_state:
-        st.session_state.redigering_avdelning = {}
-    if 'redigering_enhet' not in st.session_state:
-        st.session_state.redigering_enhet = {}
-
+    if 'edit_arbetsplats' not in st.session_state:
+        st.session_state.edit_arbetsplats = None
+    if 'edit_medlemmar' not in st.session_state:
+        st.session_state.edit_medlemmar = None
+    if 'arbetsplats_typ' not in st.session_state:
+        st.session_state.arbetsplats_typ = "Regional Arbetsplats"
+    
     # Uppdatera session state med cachad data
-    st.session_state.arbetsplatser = cached['arbetsplatser']
-    st.session_state.forvaltningar = cached['forvaltningar']
-
+    st.session_state.cached = cached
+    
     # Huvudflikar för separation av funktionalitet
-    tab1, tab2 = st.tabs(["Hantera Arbetsplatser", "Hantera Medlemsantal"])
-
-    with tab1:
-        # Använd cachad data
-        forvaltningar = cached['forvaltningar']
-        arbetsplatser = cached['arbetsplatser']
-        globala_arbetsplatser = indexes['globala_arbetsplatser']
-
+    tabs = st.tabs(["Hantera Arbetsplatser", "Hantera Medlemsantal"])
+    
+    # Använd cachad data
+    with tabs[0]:
+        st.header("Hantera Arbetsplatser")
+        
         # Sektion för att lägga till ny arbetsplats
-        with st.expander("Lägg till Arbetsplats"):
-            with st.form("add_workplace"):
+        with st.expander("Lägg till Arbetsplats", expanded=True):
+            # Val av förvaltningsspecifik eller regional arbetsplats (utanför formuläret)
+            is_forvaltningsspecifik = st.checkbox(
+                "Förvaltningsspecifik arbetsplats",
+                help="Markera om arbetsplatsen endast ska tillhöra en specifik förvaltning"
+            )
+            
+            if is_forvaltningsspecifik:
+                st.info("En förvaltningsspecifik arbetsplats är endast tillgänglig för den valda förvaltningen. Endast personer från den valda förvaltningen kan tillhöra denna arbetsplats.")
+            else:
+                st.info("En regional arbetsplats är tillgänglig för alla förvaltningar. Detta betyder att personer från vilken förvaltning som helst kan tillhöra denna arbetsplats.")
+
+            with st.form("add_arbetsplats"):
                 # Grundläggande information
                 namn = st.text_input("Namn på arbetsplats")
-
+                
                 # Adressinformation i två kolumner för bättre layout
                 col1, col2 = st.columns(2)
                 with col1:
@@ -243,486 +162,389 @@ def show(db):
                     postnummer = st.text_input("Postnummer")
                 with col2:
                     ort = st.text_input("Ort")
-                    kommun = st.selectbox(
-                        "Kommun",
-                        options=KOMMUNER
-                    )
-
+                    kommun = st.selectbox("Kommun", KOMMUNER)
+                
                 # Sektion för geografiska koordinater
-                st.markdown("---")
-                st.markdown("##### 📍 Koordinater (valfritt)")
-                st.markdown("Om adressen inte hittas automatiskt kan du ange koordinater manuellt.")
-
+                st.markdown("##### Geografiska Koordinater")
+                st.markdown("*Används för att visa arbetsplatsen på kartan*")
+                
                 # Koordinatinmatning i två kolumner
-                coord_col1, coord_col2 = st.columns(2)
-                with coord_col1:
-                    latitude = st.number_input("Latitud (t.ex. 57.7089)",
-                                               min_value=55.0, max_value=62.0, value=58.0, step=0.0001,
-                                               format="%.4f",
-                                               help="Nordlig koordinat. För Västra Götaland mellan ca 57-59")
-                with coord_col2:
-                    longitude = st.number_input("Longitud (t.ex. 11.9746)",
-                                                min_value=8.0, max_value=15.0, value=12.0, step=0.0001,
-                                                format="%.4f",
-                                                help="Östlig koordinat. För Västra Götaland mellan ca 11-14")
+                col1, col2 = st.columns(2)
+                with col1:
+                    lat = st.text_input(
+                        "Latitud",
+                        help="T.ex. 57.7089 (Göteborg)"
+                    )
+                with col2:
+                    lon = st.text_input(
+                        "Longitud",
+                        help="T.ex. 11.9746 (Göteborg)"
+                    )
+                
+                # Förvaltningsval om det är en förvaltningsspecifik arbetsplats
+                if is_forvaltningsspecifik:
+                    if not cached['forvaltningar']:
+                        st.warning("Lägg till minst en förvaltning först")
+                        forv_namn = None
+                        vald_forv = None
+                    else:
+                        forv_namn = st.selectbox(
+                            "Förvaltning",
+                            options=[f["namn"] for f in cached['forvaltningar']]
+                        )
+                        vald_forv = next(f for f in cached['forvaltningar'] if f["namn"] == forv_namn)
+                else:
+                    forv_namn = None
+                    vald_forv = None
+                
+                # Spara arbetsplats
+                if st.form_submit_button("Lägg till arbetsplats"):
+                    if not namn:
+                        st.error("Namn på arbetsplats måste anges")
+                    elif is_forvaltningsspecifik and not forv_namn:
+                        st.error("Välj en förvaltning för arbetsplatsen")
+                    else:
+                        # Skapa arbetsplatsobjekt
+                        arbetsplats = {
+                            "namn": namn,
+                            "gatuadress": gatuadress,
+                            "postnummer": postnummer,
+                            "ort": ort,
+                            "kommun": kommun,
+                            "lat": float(lat) if lat else None,
+                            "lon": float(lon) if lon else None,
+                            "alla_forvaltningar": not is_forvaltningsspecifik
+                        }
 
-                use_coords = st.checkbox("✓ Använd dessa koordinater",
-                                         help="Markera denna ruta om du vill använda koordinaterna ovan")
+                        # Lägg till förvaltningsinformation om det är en förvaltningsspecifik arbetsplats
+                        if is_forvaltningsspecifik and vald_forv:
+                            arbetsplats["forvaltning_id"] = vald_forv["_id"]
+                            arbetsplats["forvaltning_namn"] = vald_forv["namn"]
 
-                # Val av förvaltning eller regional arbetsplats
-                forvaltning = st.selectbox(
-                    "Välj Förvaltning",
-                    options=["Alla förvaltningar"] + [f["namn"] for f in forvaltningar],
-                    key="forv_select_new"
-                )
-
-                if st.form_submit_button("Spara"):
-                    if namn and gatuadress and postnummer and ort and kommun != "Välj kommun...":
-                        with st.spinner('Sparar arbetsplats...'):
-                            try:
-                                if forvaltning == "Alla förvaltningar":
-                                    # Kontrollera om arbetsplatsen redan finns som regional
-                                    existing = next((ap for ap in globala_arbetsplatser if ap["namn"] == namn), None)
-
-                                    if existing:
-                                        st.error("Denna arbetsplats finns redan som regional arbetsplats")
-                                    else:
-                                        arbetsplats = {
-                                            "namn": namn,
-                                            "gatuadress": gatuadress,
-                                            "postnummer": postnummer,
-                                            "ort": ort,
-                                            "kommun": kommun,
-                                            "alla_forvaltningar": True,
-                                            "forvaltning_id": None,
-                                            "forvaltning_namn": "Alla förvaltningar",
-                                            "coordinates": {"lat": latitude, "lng": longitude} if use_coords else None,
-                                            "medlemsantal": 0
-                                        }
-                                        result = db.arbetsplatser.insert_one(arbetsplats)
-                                        if result.inserted_id:
-                                            arbetsplats['_id'] = result.inserted_id
-                                            update_cache_after_change(db, 'arbetsplatser', 'create', arbetsplats)
-                                            log_action("create", f"Skapade regional arbetsplats: {namn} i {kommun}",
-                                                       "workplace")
-                                            st.success("✅ Regional arbetsplats sparad!")
-                                            st.rerun()
-                                else:
-                                    vald_forvaltning = next(f for f in forvaltningar if f["namn"] == forvaltning)
-                                    forv_arbetsplatser = indexes['arbetsplatser_by_forv'].get(vald_forvaltning["_id"],
-                                                                                              [])
-
-                                    # Kontrollera om arbetsplatsen redan finns
-                                    existing = next((ap for ap in forv_arbetsplatser if ap["namn"] == namn), None)
-                                    if existing or any(ap["namn"] == namn for ap in globala_arbetsplatser):
-                                        st.error("Denna arbetsplats finns redan")
-                                    else:
-                                        arbetsplats = {
-                                            "namn": namn,
-                                            "gatuadress": gatuadress,
-                                            "postnummer": postnummer,
-                                            "ort": ort,
-                                            "kommun": kommun,
-                                            "alla_forvaltningar": False,
-                                            "forvaltning_id": vald_forvaltning["_id"],
-                                            "forvaltning_namn": vald_forvaltning["namn"],
-                                            "medlemsantal": 0
-                                        }
-                                        result = db.arbetsplatser.insert_one(arbetsplats)
-                                        if result.inserted_id:
-                                            arbetsplats['_id'] = result.inserted_id
-                                            update_cache_after_change(db, 'arbetsplatser', 'create', arbetsplats)
-                                            log_action("create", f"Skapade arbetsplats: {namn} i {kommun}", "workplace")
-                                            st.success("✅ Arbetsplats sparad!")
-                                            st.rerun()
-                            except Exception as e:
-                                st.error(f"❌ Ett fel uppstod: {str(e)}")
-
-        st.divider()
-
+                        # Spara till databasen
+                        result = db.arbetsplatser.insert_one(arbetsplats)
+                        if result.inserted_id:
+                            arbetsplats['_id'] = result.inserted_id
+                            update_cache_after_change(db, 'arbetsplatser', 'create', arbetsplats)
+                            log_action("create", f"Skapade arbetsplats: {namn}", "arbetsplats")
+                            st.success("Arbetsplats tillagd!")
+                            st.rerun()
+                        else:
+                            st.error("Kunde inte lägga till arbetsplatsen")
+        
         # Visa befintliga arbetsplatser
-        st.subheader("Befintliga Arbetsplatser")
-
+        st.markdown("### Befintliga Arbetsplatser")
+        
         # Visa regionala arbetsplatser först i en egen sektion
-        if globala_arbetsplatser:
-            with st.expander(f"Regionala Arbetsplatser ({len(globala_arbetsplatser)})"):
-                st.markdown("##### Regionala Arbetsplatser")
-                for arbetsplats in globala_arbetsplatser:
-                    with st.expander(f"{arbetsplats['namn']}"):
-                        with st.form(f"edit_global_workplace_{arbetsplats['_id']}"):
-                            # Visa och möjliggör redigering av arbetsplatsdata
+        regionala = [ap for ap in cached['arbetsplatser'] if ap.get('alla_forvaltningar')]
+        if regionala:
+            st.write("### Regionala Arbetsplatser")
+            for ap in sorted(regionala, key=lambda x: x['namn']):
+                with st.expander(ap['namn']):
+                    with st.form(f"edit_regional_{ap['_id']}"):
+                        nytt_namn = st.text_input("Namn", value=ap['namn'])
+                        
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            ny_gatuadress = st.text_input("Gatuadress", value=ap.get('gatuadress', ''))
+                            nytt_postnummer = st.text_input("Postnummer", value=ap.get('postnummer', ''))
+                        with col2:
+                            ny_ort = st.text_input("Ort", value=ap.get('ort', ''))
+                            ny_kommun = st.selectbox("Kommun", KOMMUNER, index=KOMMUNER.index(ap.get('kommun', 'Göteborg')))
+                        
+                        # Knappar för att spara eller ta bort
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            if st.form_submit_button("Spara Ändringar"):
+                                if not nytt_namn:
+                                    st.error("Ange ett namn för arbetsplatsen")
+                                elif nytt_namn != ap['namn'] and any(a['namn'] == nytt_namn for a in cached['arbetsplatser']):
+                                    st.error("En arbetsplats med detta namn finns redan")
+                                else:
+                                    db.arbetsplatser.update_one(
+                                        {"_id": ap["_id"]},
+                                        {"$set": {
+                                            "namn": nytt_namn,
+                                            "gatuadress": ny_gatuadress,
+                                            "postnummer": nytt_postnummer,
+                                            "ort": ny_ort,
+                                            "kommun": ny_kommun
+                                        }}
+                                    )
+                                    log_action("update", f"Uppdaterade regional arbetsplats: {ap['namn']} -> {nytt_namn}", "workplace")
+                                    update_cache_after_change(db, 'arbetsplatser', 'update')
+                                    st.success("Arbetsplats uppdaterad!")
+                                    st.rerun()
+                        
+                        with col2:
+                            if st.form_submit_button("Ta Bort", type="primary"):
+                                if any(p.get('arbetsplats') and ap['namn'] in p['arbetsplats'] for p in cached['personer']):
+                                    st.error("Kan inte ta bort arbetsplatsen eftersom den har kopplade personer")
+                                else:
+                                    db.arbetsplatser.delete_one({"_id": ap["_id"]})
+                                    log_action("delete", f"Tog bort regional arbetsplats: {ap['namn']}", "workplace")
+                                    update_cache_after_change(db, 'arbetsplatser', 'delete')
+                                    st.success("Arbetsplats borttagen!")
+                                    st.rerun()
+        
+        # Visa förvaltningsspecifika arbetsplatser
+        st.markdown("### Förvaltningsspecifika Arbetsplatser")
+        for forv in sorted(cached['forvaltningar'], key=lambda x: x['namn']):
+            with st.expander(forv['namn']):
+                arbetsplatser = sorted(
+                    [ap for ap in cached['arbetsplatser'] 
+                     if not ap.get('alla_forvaltningar') and str(ap.get('forvaltning_id')) == str(forv['_id'])],
+                    key=lambda x: x['namn']
+                )
+                
+                if not arbetsplatser:
+                    st.info("Inga arbetsplatser i denna förvaltning")
+                else:
+                    for ap in arbetsplatser:
+                        # Visa och möjliggör redigering av arbetsplatsdata
+                        with st.form(f"edit_arbetsplats_{ap['_id']}"):
+                            nytt_namn = st.text_input("Namn", value=ap['namn'])
+                            
                             col1, col2 = st.columns(2)
                             with col1:
-                                nytt_namn = st.text_input("Namn", 
-                                    value=arbetsplats["namn"],
-                                    key=f"namn_global_{arbetsplats['_id']}")
-                                ny_gatuadress = st.text_input("Gatuadress", 
-                                    value=arbetsplats.get("gatuadress", ""),
-                                    key=f"gatuadress_global_{arbetsplats['_id']}")
-                                nytt_postnummer = st.text_input("Postnummer", 
-                                    value=arbetsplats.get("postnummer", ""),
-                                    key=f"postnummer_global_{arbetsplats['_id']}")
+                                ny_gatuadress = st.text_input("Gatuadress", value=ap.get('gatuadress', ''))
+                                nytt_postnummer = st.text_input("Postnummer", value=ap.get('postnummer', ''))
                             with col2:
-                                ny_ort = st.text_input("Ort", 
-                                    value=arbetsplats.get("ort", ""),
-                                    key=f"ort_global_{arbetsplats['_id']}")
-                                ny_kommun = st.selectbox("Kommun",
-                                    options=KOMMUNER,
-                                    index=KOMMUNER.index(arbetsplats.get("kommun", "Välj kommun...")),
-                                    key=f"kommun_global_{arbetsplats['_id']}")
-
+                                ny_ort = st.text_input("Ort", value=ap.get('ort', ''))
+                                ny_kommun = st.selectbox("Kommun", KOMMUNER, index=KOMMUNER.index(ap.get('kommun', 'Göteborg')))
+                            
                             # Koordinatinmatning
-                            st.markdown("##### 📍 Koordinater")
-                            coord_col1, coord_col2 = st.columns(2)
-                            with coord_col1:
-                                ny_lat = st.number_input("Latitud",
-                                    value=float(arbetsplats.get("coordinates", {}).get("lat", 58.0)),
-                                    min_value=55.0,
-                                    max_value=62.0,
-                                    step=0.0001,
-                                    format="%.4f",
-                                    help="Nordlig koordinat. För Västra Götaland mellan ca 57-59",
-                                    key=f"lat_global_{arbetsplats['_id']}")
-                            with coord_col2:
-                                ny_lng = st.number_input("Longitud",
-                                    value=float(arbetsplats.get("coordinates", {}).get("lng", 12.0)),
-                                    min_value=8.0,
-                                    max_value=15.0,
-                                    step=0.0001,
-                                    format="%.4f",
-                                    help="Östlig koordinat. För Västra Götaland mellan ca 11-14",
-                                    key=f"lng_global_{arbetsplats['_id']}")
+                            st.markdown("##### Geografiska Koordinater")
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                ny_lat = st.text_input(
+                                    "Latitud",
+                                    value=str(ap.get('lat', '')),
+                                    help="T.ex. 57.7089 (Göteborg)"
+                                )
+                            with col2:
+                                ny_lon = st.text_input(
+                                    "Longitud",
+                                    value=str(ap.get('lon', '')),
+                                    help="T.ex. 11.9746 (Göteborg)"
+                                )
                             
                             # Knappar för att spara eller ta bort
                             col1, col2 = st.columns(2)
                             with col1:
-                                if st.form_submit_button("Spara ändringar"):
-                                    update_data = {
-                                        "namn": nytt_namn,
-                                        "gatuadress": ny_gatuadress,
-                                        "postnummer": nytt_postnummer,
-                                        "ort": ny_ort,
-                                        "kommun": ny_kommun,
-                                        "coordinates": {
-                                            "lat": ny_lat,
-                                            "lng": ny_lng
-                                        }
-                                    }
-                                    
-                                    result = db.arbetsplatser.update_one(
-                                        {"_id": arbetsplats["_id"]},
-                                        {"$set": update_data}
-                                    )
-                                    
-                                    if result.modified_count > 0:
-                                        update_cache_after_change(db, 'arbetsplatser', 'update')
-                                        log_action("update", f"Uppdaterade regional arbetsplats: {arbetsplats['namn']}", "workplace")
-                                        st.success("✅ Regional arbetsplats uppdaterad!")
-                                        st.rerun()
-                            
-                            with col2:
-                                if st.form_submit_button("Ta bort", type="secondary"):
-                                    personer_pa_arbetsplats = indexes['personer_by_arbetsplats'].get(arbetsplats["namn"], [])
-                                    if personer_pa_arbetsplats:
-                                        st.error("❌ Kan inte ta bort arbetsplats som har personer")
+                                if st.form_submit_button("Spara Ändringar"):
+                                    if not nytt_namn:
+                                        st.error("Ange ett namn för arbetsplatsen")
+                                    elif nytt_namn != ap['namn'] and any(a['namn'] == nytt_namn for a in cached['arbetsplatser']):
+                                        st.error("En arbetsplats med detta namn finns redan")
                                     else:
-                                        db.arbetsplatser.delete_one({"_id": arbetsplats["_id"]})
-                                        update_cache_after_change(db, 'arbetsplatser', 'delete')
-                                        log_action("delete", f"Tog bort regional arbetsplats: {arbetsplats['namn']}", "workplace")
-                                        st.success("✅ Regional arbetsplats borttagen!")
-                                        st.rerun()
-
-        # Visa förvaltningsspecifika arbetsplatser
-        st.markdown("### Förvaltningsspecifika Arbetsplatser")
-        for forv in forvaltningar:
-            forv_arbetsplatser = indexes['arbetsplatser_by_forv'].get(forv["_id"], [])
-
-            if forv_arbetsplatser:
-                with st.expander(f"{forv['namn']} - {len(forv_arbetsplatser)} arbetsplatser"):
-                    for arbetsplats in forv_arbetsplatser:
-                        with st.expander(f"{arbetsplats['namn']}"):
-                            with st.form(f"edit_workplace_{arbetsplats['_id']}"):
-                                # Visa och möjliggör redigering av arbetsplatsdata
-                                col1, col2 = st.columns(2)
-                                with col1:
-                                    nytt_namn = st.text_input("Namn",
-                                                                  value=arbetsplats["namn"],
-                                                                  key=f"namn_{arbetsplats['_id']}")
-                                    ny_gatuadress = st.text_input("Gatuadress",
-                                                                      value=arbetsplats.get("gatuadress", ""),
-                                                                      key=f"gatuadress_{arbetsplats['_id']}")
-                                    nytt_postnummer = st.text_input("Postnummer",
-                                                                    value=arbetsplats.get("postnummer", ""),
-                                                                    key=f"postnummer_{arbetsplats['_id']}")
-                                with col2:
-                                    ny_ort = st.text_input("Ort",
-                                                           value=arbetsplats.get("ort", ""),
-                                                           key=f"ort_{arbetsplats['_id']}")
-                                    ny_kommun = st.selectbox("Kommun",
-                                                                 options=KOMMUNER,
-                                                                 index=KOMMUNER.index(
-                                                                     arbetsplats.get("kommun", "Välj kommun...")),
-                                                                 key=f"kommun_{arbetsplats['_id']}")
-
-                                # Koordinatinmatning
-                                st.markdown("##### 📍 Koordinater")
-                                coord_col1, coord_col2 = st.columns(2)
-                                with coord_col1:
-                                    ny_lat = st.number_input("Latitud",
-                                        value=float(arbetsplats.get("coordinates", {}).get("lat", 58.0)),
-                                        min_value=55.0,
-                                        max_value=62.0,
-                                        step=0.0001,
-                                        format="%.4f",
-                                        help="Nordlig koordinat. För Västra Götaland mellan ca 57-59",
-                                        key=f"lat_{arbetsplats['_id']}")
-                                with coord_col2:
-                                    ny_lng = st.number_input("Longitud",
-                                        value=float(arbetsplats.get("coordinates", {}).get("lng", 12.0)),
-                                        min_value=8.0,
-                                        max_value=15.0,
-                                        step=0.0001,
-                                        format="%.4f",
-                                        help="Östlig koordinat. För Västra Götaland mellan ca 11-14",
-                                        key=f"lng_{arbetsplats['_id']}")
-
-                                # Knappar för att spara eller ta bort
-                                col1, col2 = st.columns(2)
-                                with col1:
-                                    if st.form_submit_button("Spara ändringar"):
                                         update_data = {
                                             "namn": nytt_namn,
                                             "gatuadress": ny_gatuadress,
                                             "postnummer": nytt_postnummer,
                                             "ort": ny_ort,
-                                            "kommun": ny_kommun,
-                                            "coordinates": {
-                                                "lat": ny_lat,
-                                                "lng": ny_lng
-                                            }
+                                            "kommun": ny_kommun
                                         }
-
-                                        result = db.arbetsplatser.update_one(
-                                            {"_id": arbetsplats["_id"]},
+                                        
+                                        if ny_lat and ny_lon:
+                                            try:
+                                                update_data["lat"] = float(ny_lat)
+                                                update_data["lon"] = float(ny_lon)
+                                            except ValueError:
+                                                st.error("Ogiltigt format för koordinater")
+                                                return
+                                        
+                                        db.arbetsplatser.update_one(
+                                            {"_id": ap["_id"]},
                                             {"$set": update_data}
                                         )
-
-                                        if result.modified_count > 0:
-                                            update_cache_after_change(db, 'arbetsplatser', 'update')
-                                            log_action("update", f"Uppdaterade arbetsplats: {arbetsplats['namn']}",
-                                                       "workplace")
-                                            st.success("✅ Arbetsplats uppdaterad!")
-                                            st.rerun()
-
-                                with col2:
-                                    if st.form_submit_button("Ta bort", type="secondary"):
-                                        personer_pa_arbetsplats = indexes['personer_by_arbetsplats'].get(
-                                            arbetsplats["namn"], [])
-                                        if personer_pa_arbetsplats:
-                                            st.error("❌ Kan inte ta bort arbetsplats som har personer")
-                                        else:
-                                            db.arbetsplatser.delete_one({"_id": arbetsplats["_id"]})
-                                            update_cache_after_change(db, 'arbetsplatser', 'delete')
-                                            log_action("delete", f"Tog bort arbetsplats: {arbetsplats['namn']}",
-                                                       "workplace")
-                                            st.success("✅ Arbetsplats borttagen!")
-                                            st.rerun()
-
-    with tab2:
-        st.subheader("Hantera Medlemsantal")
-
-        # Använd cachad data för optimerad prestanda
-        # Detta minskar antalet databasanrop signifikant
-        arbetsplatser = st.session_state.arbetsplatser
-        forvaltningar = st.session_state.forvaltningar
-
+                                        log_action("update", f"Uppdaterade arbetsplats: {ap['namn']} -> {nytt_namn}", "workplace")
+                                        update_cache_after_change(db, 'arbetsplatser', 'update')
+                                        st.success("Arbetsplats uppdaterad!")
+                                        st.rerun()
+                            
+                            with col2:
+                                if st.form_submit_button("Ta Bort", type="primary"):
+                                    if any(p.get('arbetsplats') and ap['namn'] in p['arbetsplats'] for p in cached['personer']):
+                                        st.error("Kan inte ta bort arbetsplatsen eftersom den har kopplade personer")
+                                    else:
+                                        db.arbetsplatser.delete_one({"_id": ap["_id"]})
+                                        log_action("delete", f"Tog bort arbetsplats: {ap['namn']}", "workplace")
+                                        update_cache_after_change(db, 'arbetsplatser', 'delete')
+                                        st.success("Arbetsplats borttagen!")
+                                        st.rerun()
+    
+    # Använd cachad data för optimerad prestanda
+    # Detta minskar antalet databasanrop signifikant
+    with tabs[1]:
+        st.header("Hantera Medlemsantal")
+        
         # Optimera gruppering av arbetsplatser
         # Samlar alla instanser av samma arbetsplats (både regionala och specifika)
         # för att möjliggöra effektiv hantering av medlemsantal
-        grouped_workplaces = defaultdict(list)
-        for arbetsplats in arbetsplatser:
-            grouped_workplaces[arbetsplats["namn"]].append(arbetsplats)
-
+        arbetsplatser_by_namn = defaultdict(list)
+        
         # Implementera avancerad cachning av organisationsstruktur
         # Detta är kritiskt för prestandan vid hantering av stora datamängder
-
+        
         # Cache avdelningar per förvaltning
         # Skapar en hierarkisk struktur för snabb åtkomst
-        if 'avdelningar_per_forvaltning' not in st.session_state:
-            st.session_state.avdelningar_per_forvaltning = {}
-            for forv in forvaltningar:
-                st.session_state.avdelningar_per_forvaltning[str(forv["_id"])] = list(
-                    db.avdelningar.find({"forvaltning_id": forv["_id"]})
-                )
-
+        avdelningar_by_forv = defaultdict(list)
+        for avd in cached['avdelningar']:
+            avdelningar_by_forv[str(avd['forvaltning_id'])].append(avd)
+        
         # Cachea enheter per avdelning
         # Kompletterar den hierarkiska strukturen för komplett organisationsträd
-        if 'enheter_per_avdelning' not in st.session_state:
-            st.session_state.enheter_per_avdelning = {}
-            for forv in forvaltningar:
-                for avd in st.session_state.avdelningar_per_forvaltning[str(forv["_id"])]:
-                    st.session_state.enheter_per_avdelning[str(avd["_id"])] = list(
-                        db.enheter.find({"avdelning_id": avd["_id"]})
-                    )
-
+        enheter_by_avd = defaultdict(list)
+        for enhet in cached['enheter']:
+            enheter_by_avd[str(enhet['avdelning_id'])].append(enhet)
+        
         # Iterera över alla arbetsplatser och deras instanser
         # Hanterar både regionala och förvaltningsspecifika arbetsplatser
-        for arbetsplats_namn, instances in grouped_workplaces.items():
-            with st.expander(f"{arbetsplats_namn}"):
-                st.write("Medlemsantal per förvaltning:")
-
-                # Specialhantering för globala/regionala arbetsplatser
-                # Dessa kan ha medlemmar i flera förvaltningar samtidigt
-                if any(instance.get("alla_forvaltningar", False) for instance in instances):
-                    global_instance = next(
-                        instance for instance in instances if instance.get("alla_forvaltningar", False))
-
-                    # Hantera medlemsantal för global arbetsplats
-                    # Detta är mer komplext då det involverar flera förvaltningar
-                    forvaltningar = list(db.forvaltningar.find())
-                    medlemmar_per_forv = global_instance.get("medlemmar_per_forvaltning", {})
-
-                    with st.form(f"edit_global_members_{global_instance['_id']}"):
-                        st.write("### Global arbetsplats")
-
-                        # Komplex nästlad struktur för medlemshantering
-                        # Hanterar förvaltningar -> avdelningar -> enheter
-                        nya_medlemmar = {}
-                        for forv in forvaltningar:
-                            forv_id_str = str(forv["_id"])
-
-                            # Beräkna och visa aktuellt medlemsantal för förvaltningen
-                            current_total = sum(
-                                medlemmar_per_forv.get(forv_id_str, {}).get("enheter", {}).values()
+        for ap in cached['arbetsplatser']:
+            arbetsplatser_by_namn[ap['namn']].append(ap)
+        
+        # Specialhantering för regionala arbetsplatser
+        # Dessa kan ha medlemmar i flera förvaltningar samtidigt
+        for ap_namn, instanser in arbetsplatser_by_namn.items():
+            if any(ap.get('alla_forvaltningar') for ap in instanser):
+                # Hantera medlemsantal för regional arbetsplats
+                # Detta är mer komplext då det involverar flera förvaltningar
+                regional_ap = next(ap for ap in instanser if ap.get('alla_forvaltningar'))
+                
+                st.write("### Regional arbetsplats")
+                with st.expander(ap_namn):
+                    # Komplex nästlad struktur för medlemshantering
+                    # Hanterar förvaltningar -> avdelningar -> enheter
+                    for forv in sorted(cached['forvaltningar'], key=lambda x: x['namn']):
+                        total_medlemmar = 0
+                        
+                        # Beräkna och visa aktuellt medlemsantal för förvaltningen
+                        personer_i_forv = [p for p in cached['personer'] 
+                                         if str(p['forvaltning_id']) == str(forv['_id'])]
+                        
+                        # Expanderbar sektion per förvaltning
+                        with st.expander(forv['namn']):
+                            # Hämta och visa avdelningsstruktur
+                            avdelningar = sorted(
+                                avdelningar_by_forv[str(forv['_id'])],
+                                key=lambda x: x['namn']
                             )
-
-                            # Expanderbar sektion per förvaltning
-                            with st.expander(f"{forv['namn']} - Medlemmar: {current_total}"):
-                                # Hämta och visa avdelningsstruktur
-                                avdelningar = list(db.avdelningar.find({"forvaltning_id": forv["_id"]}))
-                                medlemmar_denna_forv = {}
-
-                                # Nästlad struktur för avdelningar
-                                for avd in avdelningar:
-                                    with st.expander(f"{avd['namn']}"):
-                                        # Hantera enheter inom avdelningen
-                                        enheter = list(db.enheter.find({"avdelning_id": avd["_id"]}))
-
-                                        # Inmatningsfält för medlemsantal per enhet
-                                        for enhet in enheter:
-                                            enhet_id_str = str(enhet["_id"])
-                                            current_members = medlemmar_per_forv.get(forv_id_str, {}).get("enheter",
-                                                                                                          {}).get(
-                                                enhet_id_str, 0)
-
-                                            medlemsantal = st.number_input(
-                                                f"Antal medlemmar i {enhet['namn']}",
-                                                min_value=0,
-                                                value=int(current_members),
-                                                key=f"medlemmar_global_{global_instance['_id']}_{forv_id_str}_{enhet_id_str}"
-                                            )
-
-                                            # Uppdatera medlemsantal om det finns medlemmar
-                                            if medlemsantal > 0:
-                                                if "enheter" not in medlemmar_denna_forv:
-                                                    medlemmar_denna_forv["enheter"] = {}
-                                                medlemmar_denna_forv["enheter"][enhet_id_str] = medlemsantal
-
-                                # Spara medlemsdata för förvaltningen
-                                if medlemmar_denna_forv:
-                                    nya_medlemmar[forv_id_str] = medlemmar_denna_forv
-
-                                # Visa totalt antal medlemmar för förvaltningen
-                                total_forv = sum(
-                                    medlemmar_denna_forv.get("enheter", {}).values()
-                                )
-                                if total_forv > 0:
-                                    st.info(f"Totalt antal medlemmar i denna förvaltning: {total_forv}")
-
-                        # Hantera uppdatering av medlemsantal
-                        if st.form_submit_button("Uppdatera medlemsantal", use_container_width=True):
-                            # Spåra ändringar för loggning
-                            changes = []
-                            for forv in forvaltningar:
-                                forv_id_str = str(forv["_id"])
-                                gamla_data = medlemmar_per_forv.get(forv_id_str, {})
-                                nya_data = nya_medlemmar.get(forv_id_str, {})
-
-                                # Identifiera och logga ändringar
-                                if gamla_data != nya_data:
-                                    gamla_total = sum(gamla_data.get("enheter", {}).values())
-                                    nya_total = sum(nya_data.get("enheter", {}).values())
-                                    changes.append(f"{forv['namn']}: {gamla_total} → {nya_total}")
-
-                            # Uppdatera databasen och logga ändringar
-                            if changes:
-                                db.arbetsplatser.update_one(
-                                    {"_id": global_instance["_id"]},
-                                    {"$set": {"medlemmar_per_forvaltning": nya_medlemmar}}
-                                )
-                                log_action("update",
-                                           f"Uppdaterade medlemsantal för global arbetsplats {arbetsplats_namn}. " +
-                                           f"Ändringar: {', '.join(changes)}",
-                                           "workplace"
-                                           )
-                                st.success("✅ Medlemsantal uppdaterat!")
-                                st.rerun()
-
-                else:
-                    # Hantering av förvaltningsspecifika arbetsplatser
-                    # Enklare struktur då de endast tillhör en förvaltning
-                    for instance in instances:
-                        with st.form(f"edit_members_{instance['_id']}"):
-                            st.write(f"### {instance['forvaltning_namn']}")
-
-                            # Hämta organisationsstruktur för förvaltningen
-                            avdelningar = list(db.avdelningar.find({"forvaltning_id": instance["forvaltning_id"]}))
-                            medlemmar_per_enhet = instance.get("medlemmar_per_enhet", {})
-
-                            # Hantera medlemsantal per enhet
-                            nya_medlemmar = {}
-                            total_medlemmar = 0
-
-                            # Nästlad struktur för avdelningar och enheter
+                            
+                            # Nästlad struktur för avdelningar
                             for avd in avdelningar:
-                                with st.expander(f"{avd['namn']}"):
-                                    enheter = list(db.enheter.find({"avdelning_id": avd["_id"]}))
-
+                                st.write(f"#### {avd['namn']}")
+                                
+                                # Hantera enheter inom avdelningen
+                                enheter = sorted(enheter_by_avd[str(avd['_id'])], key=lambda x: x['namn'])
+                                for enhet in enheter:
                                     # Inmatningsfält för medlemsantal per enhet
-                                    for enhet in enheter:
-                                        enhet_id_str = str(enhet["_id"])
-                                        medlemsantal = st.number_input(
-                                            f"Antal medlemmar i {enhet['namn']}",
-                                            min_value=0,
-                                            value=int(medlemmar_per_enhet.get(enhet_id_str, 0)),
-                                            key=f"medlemmar_specific_{instance['_id']}_{enhet_id_str}_{avd['_id']}"
-                                        )
-
-                                        # Uppdatera totaler om det finns medlemmar
-                                        if medlemsantal > 0:
-                                            nya_medlemmar[enhet_id_str] = medlemsantal
-                                            total_medlemmar += medlemsantal
-
-                            # Visa totalt antal medlemmar
-                            st.info(f"Totalt antal medlemmar: {total_medlemmar}")
-
-                            # Hantera uppdatering av medlemsantal
-                            if st.form_submit_button("Uppdatera medlemsantal", use_container_width=True):
-                                if nya_medlemmar != medlemmar_per_enhet:
-                                    # Uppdatera databasen med nya medlemsantal
-                                    db.arbetsplatser.update_one(
-                                        {"_id": instance["_id"]},
-                                        {"$set": {
-                                            "medlemmar_per_enhet": nya_medlemmar,
-                                            "medlemsantal": total_medlemmar
-                                        }}
-                                    )
-                                    # Logga ändringar
-                                    log_action("update",
-                                               f"Uppdaterade medlemsantal för arbetsplats {arbetsplats_namn} "
-                                               f"under {instance['forvaltning_namn']} " +
-                                               f"från {instance.get('medlemsantal', 0)} till {total_medlemmar}",
-                                               "workplace"
-                                               )
-                                    st.success("✅ Medlemsantal uppdaterat!")
-                                    st.rerun()
+                                    personer_i_enhet = [
+                                        p for p in personer_i_forv 
+                                        if str(p['enhet_id']) == str(enhet['_id']) and 
+                                        ap_namn in p.get('arbetsplats', [])
+                                    ]
+                                    
+                                    antal = len(personer_i_enhet)
+                                    total_medlemmar += antal
+                                    
+                                    st.write(f"##### {enhet['namn']}: {antal} medlemmar")
+                            
+                            # Uppdatera medlemsantal om det finns medlemmar
+                            if total_medlemmar > 0:
+                                st.write(f"**Totalt i {forv['namn']}: {total_medlemmar} medlemmar**")
+                            else:
+                                st.write("*Inga medlemmar i denna förvaltning*")
+                        
+                        # Spara medlemsdata för förvaltningen
+                        if total_medlemmar > 0:
+                            db.arbetsplatser.update_one(
+                                {"_id": regional_ap["_id"]},
+                                {"$set": {f"medlemmar_per_forv.{str(forv['_id'])}": total_medlemmar}}
+                            )
+                        
+                        # Visa totalt antal medlemmar för förvaltningen
+                        st.write(f"**{forv['namn']}: {total_medlemmar} medlemmar**")
+            else:
+                # Hantera uppdatering av medlemsantal
+                for ap in instanser:
+                    # Spåra ändringar för loggning
+                    gamla_medlemmar = ap.get('beraknat_medlemsantal', 0)
+                    nya_medlemmar = len([
+                        p for p in cached['personer']
+                        if ap['namn'] in p.get('arbetsplats', [])
+                    ])
+                    
+                    # Identifiera och logga ändringar
+                    if gamla_medlemmar != nya_medlemmar:
+                        db.arbetsplatser.update_one(
+                            {"_id": ap["_id"]},
+                            {"$set": {"beraknat_medlemsantal": nya_medlemmar}}
+                        )
+                        
+                        # Uppdatera databasen och logga ändringar
+                        if gamla_medlemmar != nya_medlemmar:
+                            log_action(
+                                "update",
+                                f"Uppdaterade medlemsantal för {ap['namn']}: {gamla_medlemmar} -> {nya_medlemmar}",
+                                "workplace"
+                            )
+        
+        # Hantering av förvaltningsspecifika arbetsplatser
+        # Enklare struktur då de endast tillhör en förvaltning
+        for forv in sorted(cached['forvaltningar'], key=lambda x: x['namn']):
+            with st.expander(forv['namn']):
+                # Hämta organisationsstruktur för förvaltningen
+                avdelningar = sorted(
+                    avdelningar_by_forv[str(forv['_id'])],
+                    key=lambda x: x['namn']
+                )
+                
+                # Hantera medlemsantal per enhet
+                for avd in avdelningar:
+                    st.write(f"#### {avd['namn']}")
+                    
+                    # Nästlad struktur för avdelningar och enheter
+                    enheter = sorted(enheter_by_avd[str(avd['_id'])], key=lambda x: x['namn'])
+                    for enhet in enheter:
+                        # Inmatningsfält för medlemsantal per enhet
+                        arbetsplatser = [ap for ap in cached['arbetsplatser'] 
+                                       if str(ap.get('enhet_id')) == str(enhet['_id'])]
+                        
+                        if arbetsplatser:
+                            st.write(f"##### {enhet['namn']}")
+                            for ap in sorted(arbetsplatser, key=lambda x: x['namn']):
+                                antal = len([p for p in cached['personer'] 
+                                          if ap['namn'] in p.get('arbetsplats', [])])
+                                st.write(f"- {ap['namn']}: {antal} medlemmar")
+                        
+                        # Uppdatera totaler om det finns medlemmar
+                        total_medlemmar = sum(
+                            len([p for p in cached['personer'] 
+                                 if ap['namn'] in p.get('arbetsplats', [])])
+                            for ap in arbetsplatser
+                        )
+                        
+                        # Visa totalt antal medlemmar
+                        if total_medlemmar > 0:
+                            st.write(f"**Totalt i {enhet['namn']}: {total_medlemmar} medlemmar**")
+                
+                # Hantera uppdatering av medlemsantal
+                for ap in [ap for ap in cached['arbetsplatser'] 
+                          if str(ap.get('forvaltning_id')) == str(forv['_id'])]:
+                    # Uppdatera databasen med nya medlemsantal
+                    gamla_medlemmar = ap.get('beraknat_medlemsantal', 0)
+                    nya_medlemmar = len([p for p in cached['personer'] 
+                                       if ap['namn'] in p.get('arbetsplats', [])])
+                    
+                    # Logga ändringar
+                    if gamla_medlemmar != nya_medlemmar:
+                        db.arbetsplatser.update_one(
+                            {"_id": ap["_id"]},
+                            {"$set": {"beraknat_medlemsantal": nya_medlemmar}}
+                        )
+                        log_action(
+                            "update",
+                            f"Uppdaterade medlemsantal för {ap['namn']}: {gamla_medlemmar} -> {nya_medlemmar}",
+                            "workplace"
+                        )

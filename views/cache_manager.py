@@ -1,8 +1,23 @@
 """
-Centraliserad cachningsmodul för Vision Sektion 10.
+Cachningsmodul för Vision Sektion 10
 
-Denna modul hanterar all cachning av data från databasen för att optimera prestanda.
-Implementerar både grundläggande datacachnig och avancerade indexeringsstrukturer.
+Denna modul förbättrar systemets prestanda genom att:
+- Spara ofta använd data i minnet
+- Skapa smarta index för snabb sökning
+- Uppdatera data automatiskt när något ändras
+
+Modulen hanterar cachning av:
+- Förvaltningar och deras struktur
+- Avdelningar och enheter
+- Arbetsplatser och deras kopplingar
+- Personer och deras roller
+- Styrelser och nämnder
+
+Tekniska detaljer:
+- Använder Streamlit's sessionshantering
+- Skapar index för snabbare sökningar
+- Hanterar automatisk uppdatering av cache
+- Säkerställer att data alltid är aktuell
 """
 
 import streamlit as st
@@ -10,7 +25,10 @@ from collections import defaultdict
 
 
 def load_base_data(db):
-    """Laddar grundläggande data från databasen"""
+    """
+    Hämtar grundläggande data från databasen.
+    Detta är första steget i cachningen där vi läser in all rådata.
+    """
     return {
         'forvaltningar': list(db.forvaltningar.find()),
         'avdelningar': list(db.avdelningar.find()),
@@ -22,7 +40,16 @@ def load_base_data(db):
 
 
 def create_indexes(data):
-    """Skapar indexstrukturer för snabb åtkomst till data"""
+    """
+    Skapar smarta index för snabb åtkomst till data.
+    
+    Indexen gör det enkelt att:
+    - Hitta avdelningar i en förvaltning
+    - Hitta enheter i en avdelning
+    - Hitta arbetsplatser i en förvaltning
+    - Hitta personer på en arbetsplats
+    - Skilja på regionala och lokala arbetsplatser
+    """
     indexes = {
         'avdelningar_by_forv': defaultdict(list),
         'enheter_by_avd': defaultdict(list),
@@ -30,7 +57,7 @@ def create_indexes(data):
         'personer_by_forv': defaultdict(list),
         'personer_by_arbetsplats': defaultdict(list),
         'boards_by_forv': defaultdict(list),
-        'globala_arbetsplatser': [],
+        'regionala_arbetsplatser': [],
         'id_lookup': {
             'forvaltningar': {},
             'avdelningar': {},
@@ -55,7 +82,7 @@ def create_indexes(data):
     # Indexera arbetsplatser
     for ap in data['arbetsplatser']:
         if ap.get('alla_forvaltningar'):
-            indexes['globala_arbetsplatser'].append(ap)
+            indexes['regionala_arbetsplatser'].append(ap)
         else:
             forv_id = ap['forvaltning_id']
             indexes['arbetsplatser_by_forv'][forv_id].append(ap)
@@ -83,7 +110,13 @@ def create_indexes(data):
 
 
 def get_cached_data(db, force_refresh=False):
-    """Hämtar cachad data och index, uppdaterar vid behov"""
+    """
+    Hämtar cachad data och uppdaterar vid behov.
+    
+    - Använder befintlig cache om den finns
+    - Uppdaterar cachen om data har ändrats
+    - Tvingar uppdatering om force_refresh är True
+    """
     if force_refresh or 'cached_data' not in st.session_state:
         st.session_state.cached_data = load_base_data(db)
         st.session_state.cached_indexes = create_indexes(st.session_state.cached_data)
@@ -92,7 +125,10 @@ def get_cached_data(db, force_refresh=False):
 
 
 def refresh_cache(db):
-    """Tvingar uppdatering av cache"""
+    """
+    Tvingar fram en uppdatering av all cachad data.
+    Används när vi vet att data har ändrats mycket.
+    """
     if 'cached_data' in st.session_state:
         del st.session_state.cached_data
     if 'cached_indexes' in st.session_state:
@@ -101,7 +137,13 @@ def refresh_cache(db):
 
 
 def update_cache_after_change(db, collection_name, operation, data=None):
-    """Uppdaterar cachen efter en databasändring"""
+    """
+    Uppdaterar cachen efter en databasändring.
+    
+    - Vid stora ändringar uppdateras hela cachen
+    - Vid små ändringar uppdateras bara berörda delar
+    - Säkerställer att cachen alltid är korrekt
+    """
     # För större ändringar, uppdatera hela cachen
     if operation in ['delete', 'update'] or collection_name in ['forvaltningar', 'avdelningar']:
         refresh_cache(db)

@@ -77,21 +77,27 @@ def show(db):
         st.subheader("Sök i organisationen")
         
         # Sökfält
-        search_query = st.text_input("🔍 Sök efter person, arbetsplats eller enhet", "").lower()
+        search_query = st.text_input("🔍 Sök efter person, arbetsplats eller enhet (använd * för att visa alla)", "").lower()
         
         if search_query:
-            # Sök i personer
-            matching_personer = [p for p in cached['personer'] 
-                               if search_query in p.get('namn', '').lower()]
-            
-            # Sök i arbetsplatser
-            matching_arbetsplatser = [a for a in cached['arbetsplatser'] 
-                                    if search_query in a.get('namn', '').lower()]
-            
-            # Sök i enheter
-            matching_enheter = [e for e in cached['enheter'] 
-                              if search_query in e.get('namn', '').lower()]
-            
+            # Om sökningen är "*", visa alla resultat
+            if search_query == "*":
+                matching_personer = cached['personer']
+                matching_arbetsplatser = cached['arbetsplatser']
+                matching_enheter = cached['enheter']
+            else:
+                # Sök i personer
+                matching_personer = [p for p in cached['personer'] 
+                                   if search_query in p.get('namn', '').lower()]
+                
+                # Sök i arbetsplatser
+                matching_arbetsplatser = [a for a in cached['arbetsplatser'] 
+                                        if search_query in a.get('namn', '').lower()]
+                
+                # Sök i enheter
+                matching_enheter = [e for e in cached['enheter'] 
+                                  if search_query in e.get('namn', '').lower()]
+
             # Visa sökresultat
             if matching_personer:
                 st.markdown("### Personer")
@@ -100,9 +106,26 @@ def show(db):
                     'Förvaltning': p.get('forvaltning_namn', ''),
                     'Avdelning': p.get('avdelning_namn', ''),
                     'Enhet': p.get('enhet_namn', ''),
-                    'Arbetsplats': p.get('arbetsplats', '')
+                    'Arbetsplats': p.get('arbetsplats', ''),
+                    'Telefon': p.get('telefon', ''),
+                    'Email': p.get('email', '')
                 } for p in matching_personer])
-                st.dataframe(df_personer, hide_index=True)
+                # Konfigurera dataframe med horisontell scrollbar
+                st.dataframe(
+                    df_personer,
+                    hide_index=True,
+                    use_container_width=False,  # Tillåter horisontell scrollning
+                    width=1000,  # Fast bredd som passar de flesta skärmar
+                    column_config={
+                        'Namn': st.column_config.TextColumn("Namn", width="medium"),
+                        'Förvaltning': st.column_config.TextColumn("Förvaltning", width="medium"),
+                        'Avdelning': st.column_config.TextColumn("Avdelning", width="medium"),
+                        'Enhet': st.column_config.TextColumn("Enhet", width="medium"),
+                        'Arbetsplats': st.column_config.TextColumn("Arbetsplats", width="medium"),
+                        'Telefon': st.column_config.TextColumn("Telefon", width="medium"),
+                        'Email': st.column_config.TextColumn("Email", width="large")
+                    }
+                )
             
             if matching_arbetsplatser:
                 st.markdown("### Arbetsplatser")

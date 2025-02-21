@@ -1,29 +1,23 @@
 """
-Autentiserings- och Auktoriseringsmodul för Vision Sektion 10
+Säkerhetsmodul för Vision Sektion 10
 
-Denna modul hanterar all säkerhetsrelaterad funktionalitet i systemet:
+Denna modul hanterar all säkerhet i systemet:
+- Inloggning och användarhantering
+- Lösenordshantering (krypterade lösenord)
+- Behörighetskontroll för olika delar
+- Skydd mot obehörig åtkomst
 
-1. Användarhantering
-   - Skapande av nya användare
-   - Lösenordshantering med säker kryptering
-   - Användarroller och behörigheter
-
-2. Säkerhetsfunktioner
-   - Krypterad lösenordslagring med bcrypt
-   - Sessionshantering via Streamlit
-   - Skydd mot brutforce-attacker
-   - Loggning av säkerhetshändelser
-
-3. Behörighetskontroll
-   - Rollbaserad åtkomstkontroll
-   - Dekoratorbaserad behörighetskontroll
-   - Dynamisk sessionhantering
+Modulen innehåller:
+- Funktioner för att skapa och hantera användare
+- Säker lösenordshantering med kryptering
+- Inloggnings- och utloggningsfunktioner
+- Kontroll av behörigheter
 
 Tekniska detaljer:
-- Använder bcrypt för säker lösenordshashning
-- Implementerar MongoDB för användardata
-- Tillhandahåller loggning via custom_logging
-- Integrerar med Streamlit's sessionshantering
+- Använder bcrypt för säker lösenordshantering
+- Sparar användardata i MongoDB
+- Loggar alla säkerhetshändelser
+- Hanterar sessioner via Streamlit
 """
 
 import streamlit as st
@@ -33,16 +27,8 @@ from views.custom_logging import log_action, current_time
 
 def init_auth():
     """
-    Initierar autentiseringssystemets tillstånd.
-    
-    Denna funktion säkerställer att alla nödvändiga sessionsvariabler
-    finns tillgängliga för autentiseringssystemet. Den körs vid
-    applikationsstart och efter utloggning.
-    
-    Hanterade sessionsvariabler:
-    - authenticated: Boolean som indikerar om användaren är inloggad
-    - user_role: Användarens roll i systemet
-    - username: Inloggad användares användarnamn
+    Startar upp säkerhetssystemet.
+    Kontrollerar att alla nödvändiga säkerhetsinställningar finns.
     """
     if 'authenticated' not in st.session_state:
         st.session_state.authenticated = False
@@ -54,43 +40,16 @@ def init_auth():
 
 def hash_password(password):
     """
-    Skapar en säker hash av ett lösenord.
-    
-    Använder bcrypt-algoritmen för att skapa en kryptografiskt säker
-    hash av lösenordet. Varje hash innehåller ett unikt salt för
-    extra säkerhet.
-    
-    Args:
-        password (str): Lösenordet som ska hashas
-    
-    Returns:
-        bytes: Den genererade hashen i binärt format
-    
-    Tekniska detaljer:
-    - Använder bcrypt med automatiskt genererat salt
-    - UTF-8-kodning av lösenordet före hashning
-    - Resultatet är kompatibelt med verify_password
+    Krypterar ett lösenord på ett säkert sätt.
+    Använder bcrypt som är en säker krypteringsmetod.
     """
     return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
 
 
 def verify_password(password, hashed_password):
     """
-    Verifierar ett lösenord mot dess lagrade hash.
-    
-    Använder bcrypt för att säkert jämföra ett angivet lösenord
-    med dess tidigare genererade hash.
-    
-    Args:
-        password (str): Lösenordet som ska verifieras
-        hashed_password (bytes): Den lagrade hashen att jämföra mot
-    
-    Returns:
-        bool: True om lösenordet matchar, False annars
-    
-    Tekniska detaljer:
-    - Hanterar UTF-8-kodning automatiskt
-    - Tidskonstant jämförelse för att förhindra timing-attacker
+    Kontrollerar om ett lösenord matchar den krypterade versionen.
+    Används vid inloggning för att verifiera användarens lösenord.
     """
     return bcrypt.checkpw(password.encode('utf-8'), hashed_password)
 
@@ -99,25 +58,10 @@ def create_user(db, username, password, role='user'):
     """
     Skapar en ny användare i systemet.
     
-    Denna funktion hanterar hela processen för att skapa en ny användare,
-    inklusive validering, lösenordshashning och databasoperationer.
-    
-    Args:
-        db: MongoDB-databasanslutning
-        username (str): Önskat användarnamn
-        password (str): Användarens lösenord
-        role (str): Användarroll (default: 'user')
-    
-    Returns:
-        tuple: (success, message)
-        - success (bool): True om användaren skapades
-        - message (str): Beskrivande meddelande om resultatet
-    
-    Tekniska detaljer:
-    - Kontrollerar om användarnamnet är unikt
-    - Skapar index för effektiv sökning
-    - Implementerar felhantering för databasoperationer
-    - Loggar alla användarrelaterade händelser
+    - Kontrollerar att användarnamnet är unikt
+    - Krypterar lösenordet innan det sparas
+    - Sätter grundläggande användarinformation
+    - Loggar att användaren skapades
     """
     # Validera att användarnamnet är unikt
     if db.users.find_one({'username': username}):
@@ -137,7 +81,7 @@ def create_user(db, username, password, role='user'):
     }
 
     try:
-        # Säkerställ att users-kollektionen finns med rätt index
+        # Säkerställ att users-collection finns med rätt index
         if 'users' not in db.list_collection_names():
             db.create_collection('users')
         db.users.create_index([("username", 1)], unique=True)
@@ -152,26 +96,12 @@ def create_user(db, username, password, role='user'):
 
 def login(db, username, password):
     """
-    Autentiserar en användare och hanterar inloggningssessionen.
+    Hanterar inloggning av användare.
     
-    Denna funktion hanterar hela inloggningsprocessen inklusive:
-    - Verifiering av användaruppgifter
-    - Uppdatering av inloggningsstatistik
-    - Hantering av sessionsvariabler
-    - Säkerhetsloggning
-    
-    Args:
-        db: MongoDB-databasanslutning
-        username (str): Användarnamn
-        password (str): Lösenord
-    
-    Returns:
-        bool: True vid lyckad inloggning, False annars
-    
-    Tekniska detaljer:
-    - Använder säker lösenordsverifiering
-    - Uppdaterar statistik för misslyckade inloggningar
-    - Hanterar sessionsvariabler för behörighetskontroll
+    - Kontrollerar användarnamn och lösenord
+    - Uppdaterar inloggningsstatistik
+    - Sätter behörigheter för sessionen
+    - Loggar inloggningsförsöket
     """
     user = db.users.find_one({'username': username})
 
@@ -204,12 +134,11 @@ def login(db, username, password):
 
 def logout():
     """
-    Loggar ut användaren och rensar sessionsinformation.
+    Loggar ut användaren från systemet.
     
-    Denna funktion hanterar utloggningsprocessen genom att:
-    - Logga utloggningshändelsen
-    - Rensa alla sessionsvariabler
-    - Återställa autentiseringstillståndet
+    - Rensar sessionsinformation
+    - Tar bort behörigheter
+    - Loggar utloggningen
     """
     # Logga utloggningshändelsen om en användare var inloggad
     username = st.session_state.get('username')
@@ -224,24 +153,11 @@ def logout():
 
 def require_auth(role=None):
     """
-    Dekorator för att kräva autentisering och specifik roll.
+    Kontrollerar att användaren har rätt behörighet.
     
-    Denna avancerade dekorator implementerar rollbaserad åtkomstkontroll
-    genom att:
-    - Verifiera att användaren är autentiserad
-    - Kontrollera användarens roll mot krävd roll
-    - Hantera oauktoriserad åtkomst
-    
-    Args:
-        role (str, optional): Krävd användarroll för åtkomst
-    
-    Returns:
-        function: Dekoratorfunktion som hanterar behörighetskontroll
-    
-    Tekniska detaljer:
-    - Använder nested functions för flexibel konfiguration
-    - Integrerar med Streamlit's sessionshantering
-    - Hanterar dynamisk sidvisning vid nekad åtkomst
+    - Ser till att användaren är inloggad
+    - Kontrollerar användarens roll om det behövs
+    - Visar inloggningsformulär om det behövs
     """
     def decorator(func):
         def wrapper(*args, **kwargs):
@@ -259,7 +175,7 @@ def require_auth(role=None):
                 st.error("Du har inte behörighet till denna sida")
                 return
 
-            # Exekvera den skyddade funktionen
+            # Kör den skyddade funktionen
             return func(*args, **kwargs)
         return wrapper
     return decorator

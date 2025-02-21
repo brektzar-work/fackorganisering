@@ -1,12 +1,41 @@
-"""Första-gångs-konfiguration för Vision Sektion 10."""
+"""
+Första-gångs-konfiguration för Vision Sektion 10
+
+Denna modul hjälper användaren att komma igång med systemet:
+- Guidar genom grundinställningar
+- Skapar första förvaltningarna
+- Lägger till regionala arbetsplatser
+- Konfigurerar standardroller
+
+Modulen innehåller:
+- Steg-för-steg guide
+- Formulär för grunddata
+- Validering av inmatning
+- Hjälptexter och förklaringar
+
+Tekniska detaljer:
+- Använder Streamlit för gränssnittet
+- Sparar data i MongoDB
+- Loggar alla konfigurationsändringar
+- Säkerställer att allt är korrekt inställt
+"""
 
 import streamlit as st
 from views.cache_manager import get_cached_data, update_cache_after_change
 from views.custom_logging import log_action
+from datetime import datetime
 
 
 def show_first_time_setup(db):
-    """Visar och hanterar första-gångs-konfigurationen."""
+    """
+    Visar och hanterar första-gångs-konfigurationen.
+    
+    Guidar användaren genom:
+    - Skapande av förvaltningar
+    - Inställning av regionala arbetsplatser
+    - Val av standardroller i systemet
+    - Bekräftelse av konfigurationen
+    """
     st.header("Första-gångs-konfiguration")
 
     # Kontrollera om konfigurationen redan är gjord
@@ -54,38 +83,36 @@ def show_first_time_setup(db):
                 st.success("Förvaltningar skapade!")
                 st.rerun()
 
-    # Steg 2: Skapa globala arbetsplatser
-    if db.forvaltningar.find_one():
-        st.subheader("Steg 2: Skapa globala arbetsplatser")
-        with st.form("setup_arbetsplatser"):
-            st.markdown(
-                "Ange de arbetsplatser som ska vara tillgängliga för alla förvaltningar (en per rad):"
-            )
-            arbetsplatser_text = st.text_area(
-                "Globala arbetsplatser",
-                placeholder="Exempel:\nHR-avdelningen\nEkonomiavdelningen\nIT-avdelningen",
-                height=150
-            )
+    # Steg 2: Skapa regionala arbetsplatser
+    if not st.session_state.get('step2_done'):
+        st.subheader("Steg 2: Skapa regionala arbetsplatser")
+        with st.form("step2"):
+            st.write("""
+            Ange regionala arbetsplatser som ska finnas tillgängliga för alla förvaltningar.
+            Exempel: Regionhuset, Stadshuset, etc.
+            """)
+            arbetsplatser = st.text_area(
+                "Regionala arbetsplatser",
+                help="Ange en arbetsplats per rad"
+            ).strip()
             
-            if st.form_submit_button("Skapa globala arbetsplatser"):
-                if not arbetsplatser_text.strip():
-                    st.error("Ange minst en global arbetsplats!")
+            if st.form_submit_button("Skapa regionala arbetsplatser"):
+                if not arbetsplatser:
+                    st.error("Ange minst en regional arbetsplats!")
                 else:
-                    # Skapa globala arbetsplatser
-                    arbetsplatser = [a.strip() for a in arbetsplatser_text.split('\n') if a.strip()]
-                    for arb_namn in arbetsplatser:
-                        result = db.arbetsplatser.insert_one({
-                            "namn": arb_namn,
-                            "alla_forvaltningar": True,
-                            "gatuadress": "",
-                            "postnummer": "",
-                            "ort": ""
-                        })
-                        if result.inserted_id:
-                            log_action("create", f"Skapade global arbetsplats: {arb_namn}", "setup")
+                    # Skapa regionala arbetsplatser
+                    for arb_namn in arbetsplatser.split('\n'):
+                        arb_namn = arb_namn.strip()
+                        if arb_namn:
+                            db.arbetsplatser.insert_one({
+                                'namn': arb_namn,
+                                'alla_forvaltningar': True,
+                                'created_at': datetime.now()
+                            })
+                            log_action("create", f"Skapade regional arbetsplats: {arb_namn}", "setup")
                     
-                    update_cache_after_change(db, 'arbetsplatser', 'create')
-                    st.success("Globala arbetsplatser skapade!")
+                    st.session_state.step2_done = True
+                    st.success("Regionala arbetsplatser skapade!")
                     st.rerun()
 
     # Steg 3: Skapa standardroller

@@ -2,20 +2,19 @@
 Vision Sektion 10 - Organisationsöversikt
 
 Detta är huvudapplikationen för Vision Sektion 10's organisationshanteringssystem.
-Systemet hanterar den kompletta organisationsstrukturen och dess funktioner:
 
 1. Användarhantering och Säkerhet
    - Inloggningssystem med krypterade lösenord
-   - Sessionhantering med Streamlit
-   - Första-gångs-konfiguration av admin-konto
+   - Sessionshantering med Streamlit
+   - Förstagångskonfiguration av admin-konto om det ej finns admin
 
 2. Organisationsstruktur
    - Hierarkisk hantering av förvaltningar, avdelningar och enheter
-   - Arbetsplatshantering med geografisk visualisering
+   - Arbetsplatshantering
    - Dynamisk uppdatering av organisationsdata
 
 3. Personalhantering
-   - Registrering och hantering av medlemmar
+   - Registrering och hantering av ombud
    - Uppdragshantering (Visionombud, Skyddsombud, etc.)
    - Koppling mellan personer och organisationsenheter
 
@@ -25,10 +24,10 @@ Systemet hanterar den kompletta organisationsstrukturen och dess funktioner:
    - Exportfunktionalitet för data
 
 Tekniska detaljer:
-- Byggt med Streamlit för användargränssnittet
-- MongoDB som databas för flexibel datalagring
-- Implementerar säker autentisering och auktorisering
-- Använder cacheing för optimerad prestanda
+- Byggt med Streamlit för användargränssnittet och enkelheten(men det blev fort komplext...)
+- MongoDB som databas för flexibel datalagring(gratis...)
+- Implementerar säker autentisering och auktorisering(hashade lösenord, oklart exakt hur säker resten av appen är dock?)
+- Använder cacheing för optimerad prestanda(Hoppas jag...)
 """
 
 import streamlit as st
@@ -45,8 +44,9 @@ st.set_page_config(
     layout="wide"  # Använd hela skärmbredden för bättre översikt
 )
 
+
 def ensure_indexes(db):
-    """Skapar MongoDB index för optimerad prestanda"""
+    """Skapar MongoDB index för, kanske(?), prestanda"""
     # Personer collection
     db.personer.create_index([("forvaltning_id", 1)])
     db.personer.create_index([("avdelning_id", 1)])
@@ -67,6 +67,7 @@ def ensure_indexes(db):
     db.enheter.create_index([("avdelning_id", 1)])
     db.enheter.create_index([("namn", 1)])
 
+
 def main():
     """
     Huvudfunktion som hanterar applikationens flöde och tillståndshantering.
@@ -74,16 +75,16 @@ def main():
     Funktionen implementerar följande huvudprocesser:
     1. Databasinitiering och anslutningshantering
     2. Autentisering och sessionshantering
-    3. Första-gångs-konfiguration vid behov
-    4. Huvudgränssnittet med navigationsflikar
+    3. Förstagångskonfiguration vid behov
+    4. Huvudgränssnittet med flikar
     
     Tekniska detaljer:
-    - Använder Streamlit's sessionshantering
+    - Använder Streamlits sessionshantering
     - Implementerar säker autentisering
     - Hanterar dynamisk sidladdning
     - Tillhandahåller användarguide och varningar
     """
-    # Initiera databaskoppling med felhantering
+    # Initiera databaskoppling
     db = init_db()
     if db is None:
         return  # Avbryt om databasanslutning misslyckas
@@ -137,7 +138,7 @@ def main():
                 st.session_state.needs_recalculation = True
                 st.rerun()
 
-    # Tillhandahåll användarguide i expanderbart sidofält
+    # Användarguide i sidofältet
     with st.sidebar.expander("📋 Kort Guide för Vision Organisationsöversikt"):
         st.info("""
         #### 1️⃣ Första steget - Skapa organisationsstruktur
@@ -177,7 +178,7 @@ def main():
 
     st.sidebar.markdown("---")
 
-    # Definiera huvudnavigationsflikar med beskrivande ikoner
+    # Definiera huvudflikar med beskrivande ikoner
     tab_titles = [
         "📊 Översikt",
         "🏢 Organisationsstruktur",
@@ -192,26 +193,26 @@ def main():
     if st.session_state.get('is_admin', False):
         tab_titles.append("🔧 Administration")
 
-    # Skapa och hantera navigationsflikar
+    # Skapa och hantera flikar
     tabs = st.tabs(tab_titles)
 
-    # Rendera innehåll baserat på aktiv flik
-    with tabs[0]:  # Översikt - huvuddashboard
+    # Innehåll baserat på aktiv flik
+    with tabs[0]:  # Översikt - Dashboard
         overview.show(db)
     with tabs[1]:  # Organisationsstruktur - hantera hierarkin
         manage_units.show(db)
-    with tabs[2]:  # Arbetsplatser - geografisk och organisatorisk hantering
+    with tabs[2]:  # Arbetsplatser - organisatorisk hantering
         manage_workplaces.show(db)
-    with tabs[3]:  # Personer - medlems- och uppdragshantering
+    with tabs[3]:  # Personer - medlems och uppdragshantering
         manage_people.show(db)
     with tabs[4]:  # Styrelser & Nämnder - representationshantering
         manage_boards.show(db)
     with tabs[5]:  # Statistik - analyser och visualiseringar
         statistics.show(db)
-    with tabs[6]:  # Exportera Data - dataexport och rapporter
+    with tabs[6]:  # Exportera Data - dataexport
         export_data.show(db)
-    
-    # Visa admin-flik om användaren är admin
+
+    # Visa adminflik om användaren är admin
     if st.session_state.get('is_admin', False) and len(tabs) > 7:
         with tabs[7]:  # Administration - endast för administratörer
             admin.show(db)

@@ -1,15 +1,24 @@
 """
 Hanteringsmodul för Styrelser och Nämnder i Vision Sektion 10
-Detta system hanterar administration av styrelser och nämnder, inklusive
-hantering av representanter och ersättare. Modulen tillhandahåller funktionalitet
-för att skapa, redigera och ta bort styrelser/nämnder samt hantera deras
-medlemmar.
+
+Denna modul hanterar alla styrelser och nämnder i systemet:
+- Skapar nya styrelser och nämnder
+- Redigerar befintliga styrelser
+- Hanterar representanter och ersättare
+- Grupperar styrelser per förvaltning
+- Skiljer på beställar- och utförarnämnder
+
+Varje styrelse/nämnd har:
+- Ett namn och en typ (beställare/utförare)
+- Koppling till en förvaltning
+- Lista på ordinarie representanter
+- Lista på ersättare
 
 Tekniska detaljer:
 - Använder Streamlit för användargränssnittet
-- Integrerar med MongoDB för datalagring
-- Implementerar loggning av alla ändringar
-- Hanterar dynamisk uppdatering av gränssnittet
+- Sparar data i MongoDB
+- Loggar alla ändringar för spårbarhet
+- Uppdaterar gränssnittet automatiskt vid ändringar
 """
 
 import streamlit as st
@@ -19,13 +28,13 @@ from views.custom_logging import log_action
 
 def show(db):
     """
-    Visar och hanterar gränssnittet för administration av styrelser och nämnder.
+    Visar och hanterar gränssnittet för styrelser och nämnder.
     
-    Funktionen:
-    1. Visar formulär för att skapa nya styrelser/nämnder
-    2. Listar befintliga styrelser/nämnder med redigeringsmöjligheter
-    3. Hanterar val av representanter och ersättare
-    4. Loggar alla ändringar i systemet
+    Funktionen låter användaren:
+    - Se alla styrelser grupperade per förvaltning
+    - Lägga till nya styrelser/nämnder
+    - Välja representanter från förvaltningens personal
+    - Redigera eller ta bort befintliga styrelser
     
     Args:
         db: MongoDB-databasanslutning med tillgång till boards och personer collections

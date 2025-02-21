@@ -1,14 +1,23 @@
 """
 Inloggningsmodul för Vision Sektion 10
-Detta system hanterar användarautentisering och inloggningsgränssnittet.
-Modulen tillhandahåller ett säkert och användarvänligt inloggningsformulär
-med felhantering och loggning av inloggningsförsök.
+
+Denna modul hanterar inloggning i systemet:
+- Visar inloggningsformulär
+- Skapar första administratören
+- Hanterar lösenordsåterställning
+- Skyddar mot felaktiga inloggningar
+
+Modulen innehåller:
+- Formulär för inloggning
+- Skapande av admin-konto
+- Säker lösenordshantering
+- Felmeddelanden och hjälptexter
 
 Tekniska detaljer:
-- Använder Streamlit för användargränssnittet
-- Implementerar säker lösenordshantering
-- Integrerar med custom_logging för spårning
-- Hanterar sessionshantering via Streamlit
+- Krypterar lösenord med bcrypt
+- Sparar användardata i MongoDB
+- Loggar alla inloggningsförsök
+- Hanterar sessioner via Streamlit
 """
 
 import streamlit as st
@@ -17,17 +26,30 @@ import bcrypt
 
 
 def hash_password(password: str) -> bytes:
-    """Hashar lösenordet med bcrypt."""
+    """
+    Krypterar ett lösenord med bcrypt.
+    Gör lösenordet säkert innan det sparas i databasen.
+    """
     return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
 
 
 def verify_password(password: str, hashed: bytes) -> bool:
-    """Verifierar ett lösenord mot dess hash."""
+    """
+    Kontrollerar om ett lösenord är korrekt.
+    Jämför det angivna lösenordet med det sparade.
+    """
     return bcrypt.checkpw(password.encode('utf-8'), hashed)
 
 
 def show_login(db):
-    """Visar och hanterar inloggningsgränssnittet."""
+    """
+    Visar inloggningsformuläret.
+    
+    - Kontrollerar om det finns användare i systemet
+    - Skapar admin-konto om det behövs
+    - Hanterar inloggningsförsök
+    - Visar relevanta felmeddelanden
+    """
     st.header("Logga in")
 
     # Kontrollera om det finns några användare

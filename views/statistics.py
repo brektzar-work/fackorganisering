@@ -26,7 +26,7 @@ Tekniska detaljer:
 - Använder Plotly för interaktiva visualiseringar
 - Implementerar Folium för kartfunktionalitet
 - Hanterar komplex databearbetning med Pandas
-- Tillhandahåller cachning för optimerad prestanda
+- Tillhandahåller caching för prestanda
 """
 
 import streamlit as st
@@ -49,8 +49,7 @@ def generate_distinct_colors(n):
     """Genererar en uppsättning visuellt distinkta färger.
     
     Funktionen skapar färger med jämn fördelning i färghjulet för optimal
-    visuell separation mellan närliggande färger. Använder HSV-färgrymd
-    för bättre kontroll över färgmättnad och ljusstyrka.
+    visuell separation mellan närliggande färger. Använder HSV-färgrymd.
     
     Args:
         n (int): Antal färger att generera
@@ -59,8 +58,7 @@ def generate_distinct_colors(n):
         list: Lista med hex-färgkoder
     
     Tekniska detaljer:
-    - Använder HSV-färgrymd för bättre färgkontroll
-    - Implementerar transparens för bättre visualisering
+    - Transparens för bättre visualisering
     - Konverterar till hex-format för webbkompatibilitet
     """
     colors = []
@@ -82,16 +80,16 @@ class StyleFunction:
     
     Denna klass definierar utseendet för geografiska områden som
     kommuner och regioner på kartan. Den implementerar en callable
-    interface för användning med Folium's style_function.
+    interface för användning med Foliums style_function.
     
     Attribut:
         color (str): Hex-färgkod för området
     
     Tekniska detaljer:
     - Implementerar __call__ för användning som callback
-    - Hanterar serialisering för cachning
     - Definierar standardvärden för kartvisualisering
     """
+
     def __init__(self, color):
         self.color = color
 
@@ -113,7 +111,7 @@ class StyleFunction:
         }
 
     def __getstate__(self):
-        """Serialiserar objektet för cachning."""
+        """Serialiserar objektet för caching."""
         return {'color': self.color}
 
     def __setstate__(self, state):
@@ -129,7 +127,7 @@ def load_map(_arbetsplatser, _personer, _db):
         location=[58.2, 13.0],  # Centrerad över VGR
         zoom_start=8,
         min_zoom=7,  # Förhindra för mycket utzoomning
-        max_zoom=18,  # Ökat från 13 till 18 för att tillåta närmare inzoomning
+        max_zoom=18,
         max_bounds=True,  # Aktivera gränser
         min_lat=56.0,  # Södra gränsen
         max_lat=60.0,  # Norra gränsen
@@ -216,13 +214,13 @@ def load_map(_arbetsplatser, _personer, _db):
 
     # Räkna arbetsplatser med koordinater
     arbetsplatser_med_koordinater = [ap for ap in _arbetsplatser if ap.get('coordinates')]
-    
+
     for arbetsplats in arbetsplatser_med_koordinater:
         try:
             # Kontrollera att koordinaterna är giltiga
             if not arbetsplats.get("coordinates") or \
-               not isinstance(arbetsplats["coordinates"].get("lat"), (int, float)) or \
-               not isinstance(arbetsplats["coordinates"].get("lng"), (int, float)):
+                    not isinstance(arbetsplats["coordinates"].get("lat"), (int, float)) or \
+                    not isinstance(arbetsplats["coordinates"].get("lng"), (int, float)):
                 failed_locations.append(f"{arbetsplats.get('namn', 'Okänd arbetsplats')} - Ogiltiga koordinater")
                 continue
 
@@ -234,7 +232,8 @@ def load_map(_arbetsplatser, _personer, _db):
 
             # Kontrollera att koordinaterna är inom rimliga gränser
             if not (56.0 <= location[0] <= 60.0 and 10.0 <= location[1] <= 15.5):
-                failed_locations.append(f"{arbetsplats.get('namn', 'Okänd arbetsplats')} - Koordinater utanför VG-regionen")
+                failed_locations.append(
+                    f"{arbetsplats.get('namn', 'Okänd arbetsplats')} - Koordinater utanför VG-regionen")
                 continue
 
             # Hitta ombud för denna arbetsplats
@@ -243,7 +242,7 @@ def load_map(_arbetsplatser, _personer, _db):
                 for p in _personer
                 if p.get('visionombud') and arbetsplats['namn'] in p.get('arbetsplats', [])
             ]
-            
+
             skyddsombud_list = [
                 f"{p.get('namn', '')} ({p.get('forvaltning_namn', '')})"
                 for p in _personer
@@ -329,7 +328,7 @@ def geocode_address(address, city, municipality):
         # Kombinera adress med stad och kommun för bättre träffsäkerhet
         full_address = f"{address}, {city}, {municipality}, Västra Götaland, Sweden"
         location = geolocator.geocode(full_address)
-        
+
         if location:
             return {"lat": location.latitude, "lng": location.longitude}
         return None
@@ -345,27 +344,27 @@ def generate_missing_coordinates(db, arbetsplatser):
     """Genererar koordinater för arbetsplatser som saknar dem."""
     updated_count = 0
     failed_count = 0
-    
+
     progress_bar = st.progress(0)
     status_text = st.empty()
-    
+
     total = len([ap for ap in arbetsplatser if not ap.get('coordinates')])
     current = 0
-    
+
     for arbetsplats in arbetsplatser:
         if not arbetsplats.get('coordinates'):
             current += 1
             progress = current / total
             progress_bar.progress(progress)
             status_text.text(f"Bearbetar {current} av {total} arbetsplatser...")
-            
+
             if arbetsplats.get('gatuadress') and arbetsplats.get('ort') and arbetsplats.get('kommun'):
                 coordinates = geocode_address(
                     arbetsplats['gatuadress'],
                     arbetsplats['ort'],
                     arbetsplats['kommun']
                 )
-                
+
                 if coordinates:
                     # Uppdatera databasen med de nya koordinaterna
                     result = db.arbetsplatser.update_one(
@@ -378,10 +377,10 @@ def generate_missing_coordinates(db, arbetsplatser):
                     failed_count += 1
             else:
                 failed_count += 1
-    
+
     progress_bar.empty()
     status_text.empty()
-    
+
     return updated_count, failed_count
 
 
@@ -391,7 +390,7 @@ def show(db):
 
     # Ladda cachad data
     cached, indexes = get_cached_data(db)
-    
+
     # Skapa flikar för olika typer av statistik
     tab1, tab2, tab3, tab4 = st.tabs([
         "Översikt",
@@ -402,7 +401,7 @@ def show(db):
 
     with tab1:
         st.subheader("Översikt")
-        
+
         # Beräkna totala antalet och nyckeltal
         total_personer = len(cached['personer'])
         total_arbetsplatser = len(cached['arbetsplatser'])
@@ -418,11 +417,13 @@ def show(db):
         with col1:
             st.metric("Totalt antal medlemmar", total_members)
             st.metric("Visionombud", total_visionombud)
-            st.metric("Medlemmar per Visionombud", round(total_members / total_visionombud if total_visionombud > 0 else 0, 1))
+            st.metric("Medlemmar per Visionombud",
+                      round(total_members / total_visionombud if total_visionombud > 0 else 0, 1))
         with col2:
             st.metric("Antal Arbetsplatser", total_arbetsplatser)
             st.metric("Skyddsombud", total_skyddsombud)
-            st.metric("Medlemmar per Skyddsombud", round(total_members / total_skyddsombud if total_skyddsombud > 0 else 0, 1))
+            st.metric("Medlemmar per Skyddsombud",
+                      round(total_members / total_skyddsombud if total_skyddsombud > 0 else 0, 1))
         with col3:
             st.metric("Förvaltningar", total_forvaltningar)
             st.metric("Avdelningar", total_avdelningar)
@@ -430,8 +431,8 @@ def show(db):
 
         # Skapa en pie chart för fördelning av medlemmar per förvaltning
         medlemmar_per_forv = {
-            f['namn']: f.get('beraknat_medlemsantal', 0) 
-            for f in cached['forvaltningar'] 
+            f['namn']: f.get('beraknat_medlemsantal', 0)
+            for f in cached['forvaltningar']
             if f.get('beraknat_medlemsantal', 0) > 0
         }
         if medlemmar_per_forv:
@@ -468,7 +469,7 @@ def show(db):
 
     with tab2:
         st.subheader("Detaljerad Statistik")
-        
+
         # Skapa stapeldiagram för arbetsplatser per förvaltning
         arbetsplatser_per_forv = {}
         for arbetsplats in cached['arbetsplatser']:
@@ -490,13 +491,13 @@ def show(db):
         # Ny graf: Jämförelse av ombud per arbetsplats
         arbetsplats_ombud_data = []
         for arbetsplats in cached['arbetsplatser']:
-            vision_count = len([p for p in cached['personer'] 
-                              if p.get('visionombud', False) and 
-                              arbetsplats['namn'] in p.get('arbetsplats', [])])
-            skydd_count = len([p for p in cached['personer'] 
-                             if p.get('skyddsombud', False) and 
-                             arbetsplats['namn'] in p.get('arbetsplats', [])])
-            
+            vision_count = len([p for p in cached['personer']
+                                if p.get('visionombud', False) and
+                                arbetsplats['namn'] in p.get('arbetsplats', [])])
+            skydd_count = len([p for p in cached['personer']
+                               if p.get('skyddsombud', False) and
+                               arbetsplats['namn'] in p.get('arbetsplats', [])])
+
             if vision_count > 0 or skydd_count > 0:
                 arbetsplats_ombud_data.append({
                     'Arbetsplats': arbetsplats['namn'],
@@ -508,10 +509,10 @@ def show(db):
         if arbetsplats_ombud_data:
             # Sortera efter totalt antal ombud (Vision + Skydd)
             arbetsplats_ombud_data.sort(
-                key=lambda x: x['Visionombud'] + x['Skyddsombud'], 
+                key=lambda x: x['Visionombud'] + x['Skyddsombud'],
                 reverse=True
             )
-            
+
             df = pd.DataFrame(arbetsplats_ombud_data)
             fig = px.bar(
                 df,
@@ -537,25 +538,27 @@ def show(db):
             forv_personer = [p for p in cached['personer'] if str(p.get('forvaltning_id')) == str(forv['_id'])]
             vision_count = len([p for p in forv_personer if p.get('visionombud', False)])
             skydd_count = len([p for p in forv_personer if p.get('skyddsombud', False)])
-            total_arbetsplatser = len([ap for ap in cached['arbetsplatser'] 
-                                     if ap.get('forvaltning_id') == forv['_id']])
-            
+            total_arbetsplatser = len([ap for ap in cached['arbetsplatser']
+                                       if ap.get('forvaltning_id') == forv['_id']])
+
             if vision_count > 0 or skydd_count > 0:
                 forvaltning_ombud_data.append({
                     'Förvaltning': forv['namn'],
                     'Visionombud': vision_count,
                     'Skyddsombud': skydd_count,
                     'Antal arbetsplatser': total_arbetsplatser,
-                    'Visionombud per arbetsplats': round(vision_count / total_arbetsplatser if total_arbetsplatser > 0 else 0, 2),
-                    'Skyddsombud per arbetsplats': round(skydd_count / total_arbetsplatser if total_arbetsplatser > 0 else 0, 2)
+                    'Visionombud per arbetsplats': round(
+                        vision_count / total_arbetsplatser if total_arbetsplatser > 0 else 0, 2),
+                    'Skyddsombud per arbetsplats': round(
+                        skydd_count / total_arbetsplatser if total_arbetsplatser > 0 else 0, 2)
                 })
 
         if forvaltning_ombud_data:
             df = pd.DataFrame(forvaltning_ombud_data)
-            
+
             # Skapa två grafer: en för totala antalet och en för per arbetsplats
             col1, col2 = st.columns(2)
-            
+
             with col1:
                 fig1 = px.bar(
                     df,
@@ -573,7 +576,7 @@ def show(db):
                     yaxis_title="Antal ombud"
                 )
                 st.plotly_chart(fig1, key="bar_total_ombud_per_forv")
-            
+
             with col2:
                 fig2 = px.bar(
                     df,
@@ -600,7 +603,7 @@ def show(db):
                 forv_personer = [p for p in cached['personer'] if str(p.get('forvaltning_id')) == str(forv['_id'])]
                 vision_count = len([p for p in forv_personer if p.get('visionombud', False)])
                 skydd_count = len([p for p in forv_personer if p.get('skyddsombud', False)])
-                
+
                 comparison_data.append({
                     'Förvaltning': forv['namn'],
                     'Medlemmar per Visionombud': round(members / vision_count if vision_count > 0 else 0, 1),
@@ -620,11 +623,11 @@ def show(db):
 
         # Visa täckningsgrad för ombud
         st.subheader("Täckningsgrad för ombud")
-        
+
         # Beräkna täckningsgrad för arbetsplatser
         arbetsplatser_med_vision = set()
         arbetsplatser_med_skydd = set()
-        
+
         for person in cached['personer']:
             if person.get('visionombud') and person.get('arbetsplats'):
                 arbetsplatser_med_vision.update(person['arbetsplats'])
@@ -632,7 +635,7 @@ def show(db):
                 arbetsplatser_med_skydd.update(person['arbetsplats'])
 
         total_arbetsplatser = len(set(ap['namn'] for ap in cached['arbetsplatser']))
-        
+
         coverage_data = [{
             'Typ': 'Arbetsplatser med Visionombud',
             'Antal': len(arbetsplatser_med_vision),
@@ -644,7 +647,8 @@ def show(db):
         }, {
             'Typ': 'Arbetsplatser utan ombud',
             'Antal': total_arbetsplatser - len(arbetsplatser_med_vision.union(arbetsplatser_med_skydd)),
-            'Procent': round((total_arbetsplatser - len(arbetsplatser_med_vision.union(arbetsplatser_med_skydd))) / total_arbetsplatser * 100, 1)
+            'Procent': round((total_arbetsplatser - len(
+                arbetsplatser_med_vision.union(arbetsplatser_med_skydd))) / total_arbetsplatser * 100, 1)
         }]
 
         df = pd.DataFrame(coverage_data)
@@ -661,9 +665,9 @@ def show(db):
 
     with tab3:
         st.subheader("Ombudsstatistik")
-        
+
         stats_tab1, stats_tab2 = st.tabs(["Visionombud", "Skyddsombud"])
-        
+
         with stats_tab1:
             # Hjälpfunktion för att räkna Visionombud
             def count_vision_reps(personer_list, filter_func=None):
@@ -676,83 +680,83 @@ def show(db):
             st.markdown("### Total Översikt")
             total_members = sum(f.get('beraknat_medlemsantal', 0) for f in cached['forvaltningar'])
             total_reps = count_vision_reps(cached['personer'])
-            
+
             # Visa totala mätvärden
             col1, col2 = st.columns(2)
             with col1:
                 st.metric("Totalt antal medlemmar", total_members)
             with col2:
                 st.metric("Totalt antal Visionombud", total_reps)
-            
+
             if total_members > 0:
-                st.metric("Medlemmar per Visionombud", 
-                         round(total_members / total_reps if total_reps > 0 else float('inf'), 1))
-            
+                st.metric("Medlemmar per Visionombud",
+                          round(total_members / total_reps if total_reps > 0 else float('inf'), 1))
+
             # Statistik per förvaltning
             st.markdown("### Per Förvaltning")
             for forv in cached['forvaltningar']:
                 # Räkna ombud för denna förvaltning
-                reps = count_vision_reps(cached['personer'], 
-                    lambda p: str(p.get('forvaltning_id')) == str(forv['_id']))
-                
+                reps = count_vision_reps(cached['personer'],
+                                         lambda p: str(p.get('forvaltning_id')) == str(forv['_id']))
+
                 # Visa om det finns ombud eller medlemmar
                 if reps > 0 or forv.get('beraknat_medlemsantal', 0) > 0:
                     with st.expander(f"{forv['namn']}"):
                         members = forv.get('beraknat_medlemsantal', 0)
-                        
+
                         col1, col2 = st.columns(2)
                         with col1:
                             st.metric("Antal medlemmar", members)
                         with col2:
                             st.metric("Antal Visionombud", reps)
-                        
+
                         if members > 0:
-                            st.metric("Medlemmar per Visionombud", 
-                                round(members / reps if reps > 0 else float('inf'), 1))
-            
+                            st.metric("Medlemmar per Visionombud",
+                                      round(members / reps if reps > 0 else float('inf'), 1))
+
             # Statistik per avdelning
             st.markdown("### Per Avdelning")
             for avd in cached['avdelningar']:
                 # Räkna ombud för denna avdelning
-                reps = count_vision_reps(cached['personer'], 
-                    lambda p: str(p.get('avdelning_id')) == str(avd['_id']))
-                
+                reps = count_vision_reps(cached['personer'],
+                                         lambda p: str(p.get('avdelning_id')) == str(avd['_id']))
+
                 # Visa om det finns ombud eller medlemmar
                 if reps > 0 or avd.get('beraknat_medlemsantal', 0) > 0:
                     with st.expander(f"{avd['namn']} ({avd['forvaltning_namn']})"):
                         members = avd.get('beraknat_medlemsantal', 0)
-                        
+
                         col1, col2 = st.columns(2)
                         with col1:
                             st.metric("Antal medlemmar", members)
                         with col2:
                             st.metric("Antal Visionombud", reps)
-                        
+
                         if members > 0:
-                            st.metric("Medlemmar per Visionombud", 
-                                round(members / reps if reps > 0 else float('inf'), 1))
-            
+                            st.metric("Medlemmar per Visionombud",
+                                      round(members / reps if reps > 0 else float('inf'), 1))
+
             # Statistik per enhet
             st.markdown("### Per Enhet")
             for enhet in cached['enheter']:
                 # Räkna ombud för denna enhet
-                reps = count_vision_reps(cached['personer'], 
-                    lambda p: str(p.get('enhet_id')) == str(enhet['_id']))
-                
+                reps = count_vision_reps(cached['personer'],
+                                         lambda p: str(p.get('enhet_id')) == str(enhet['_id']))
+
                 # Visa om det finns ombud eller medlemmar
                 if reps > 0 or enhet.get('beraknat_medlemsantal', 0) > 0:
                     with st.expander(f"{enhet['namn']} ({enhet['avdelning_namn']}, {enhet['forvaltning_namn']})"):
                         members = enhet.get('beraknat_medlemsantal', 0)
-                        
+
                         col1, col2 = st.columns(2)
                         with col1:
                             st.metric("Antal medlemmar", members)
                         with col2:
                             st.metric("Antal Visionombud", reps)
-                        
+
                         if members > 0:
-                            st.metric("Medlemmar per Visionombud", 
-                                round(members / reps if reps > 0 else float('inf'), 1))
+                            st.metric("Medlemmar per Visionombud",
+                                      round(members / reps if reps > 0 else float('inf'), 1))
 
         with stats_tab2:
             # Hjälpfunktion för att räkna Skyddsombud
@@ -766,97 +770,97 @@ def show(db):
             st.markdown("### Total Översikt")
             total_members = sum(f.get('beraknat_medlemsantal', 0) for f in cached['forvaltningar'])
             total_reps = count_safety_reps(cached['personer'])
-            
+
             # Visa totala mätvärden
             col1, col2 = st.columns(2)
             with col1:
                 st.metric("Totalt antal medlemmar", total_members)
             with col2:
                 st.metric("Totalt antal Skyddsombud", total_reps)
-            
+
             if total_members > 0:
-                st.metric("Medlemmar per Skyddsombud", 
-                         round(total_members / total_reps if total_reps > 0 else float('inf'), 1))
-            
+                st.metric("Medlemmar per Skyddsombud",
+                          round(total_members / total_reps if total_reps > 0 else float('inf'), 1))
+
             # Statistik per förvaltning
             st.markdown("### Per Förvaltning")
             for forv in cached['forvaltningar']:
                 # Räkna ombud för denna förvaltning
-                reps = count_safety_reps(cached['personer'], 
-                    lambda p: str(p.get('forvaltning_id')) == str(forv['_id']))
-                
+                reps = count_safety_reps(cached['personer'],
+                                         lambda p: str(p.get('forvaltning_id')) == str(forv['_id']))
+
                 # Visa om det finns ombud eller medlemmar
                 if reps > 0 or forv.get('beraknat_medlemsantal', 0) > 0:
                     with st.expander(f"{forv['namn']}"):
                         members = forv.get('beraknat_medlemsantal', 0)
-                        
+
                         col1, col2 = st.columns(2)
                         with col1:
                             st.metric("Antal medlemmar", members)
                         with col2:
                             st.metric("Antal Skyddsombud", reps)
-                        
+
                         if members > 0:
-                            st.metric("Medlemmar per Skyddsombud", 
-                                round(members / reps if reps > 0 else float('inf'), 1))
-            
+                            st.metric("Medlemmar per Skyddsombud",
+                                      round(members / reps if reps > 0 else float('inf'), 1))
+
             # Statistik per avdelning
             st.markdown("### Per Avdelning")
             for avd in cached['avdelningar']:
                 # Räkna ombud för denna avdelning
-                reps = count_safety_reps(cached['personer'], 
-                    lambda p: str(p.get('avdelning_id')) == str(avd['_id']))
-                
+                reps = count_safety_reps(cached['personer'],
+                                         lambda p: str(p.get('avdelning_id')) == str(avd['_id']))
+
                 # Visa om det finns ombud eller medlemmar
                 if reps > 0 or avd.get('beraknat_medlemsantal', 0) > 0:
                     with st.expander(f"{avd['namn']} ({avd['forvaltning_namn']})"):
                         members = avd.get('beraknat_medlemsantal', 0)
-                        
+
                         col1, col2 = st.columns(2)
                         with col1:
                             st.metric("Antal medlemmar", members)
                         with col2:
                             st.metric("Antal Skyddsombud", reps)
-                        
+
                         if members > 0:
-                            st.metric("Medlemmar per Skyddsombud", 
-                                round(members / reps if reps > 0 else float('inf'), 1))
-            
+                            st.metric("Medlemmar per Skyddsombud",
+                                      round(members / reps if reps > 0 else float('inf'), 1))
+
             # Statistik per enhet
             st.markdown("### Per Enhet")
             for enhet in cached['enheter']:
                 # Räkna ombud för denna enhet
-                reps = count_safety_reps(cached['personer'], 
-                    lambda p: str(p.get('enhet_id')) == str(enhet['_id']))
-                
+                reps = count_safety_reps(cached['personer'],
+                                         lambda p: str(p.get('enhet_id')) == str(enhet['_id']))
+
                 # Visa om det finns ombud eller medlemmar
                 if reps > 0 or enhet.get('beraknat_medlemsantal', 0) > 0:
                     with st.expander(f"{enhet['namn']} ({enhet['avdelning_namn']}, {enhet['forvaltning_namn']})"):
                         members = enhet.get('beraknat_medlemsantal', 0)
-                        
+
                         col1, col2 = st.columns(2)
                         with col1:
                             st.metric("Antal medlemmar", members)
                         with col2:
                             st.metric("Antal Skyddsombud", reps)
-                        
+
                         if members > 0:
-                            st.metric("Medlemmar per Skyddsombud", 
-                                round(members / reps if reps > 0 else float('inf'), 1))
+                            st.metric("Medlemmar per Skyddsombud",
+                                      round(members / reps if reps > 0 else float('inf'), 1))
 
     with tab4:
         st.subheader("Geografisk Översikt")
-        
+
         # Ladda och visa kartan
         arbetsplatser = cached['arbetsplatser']
         personer = cached['personer']
-        
+
         # Visa statistik om arbetsplatser på kartan
         with col2:
             total_arbetsplatser = len(arbetsplatser)
             arbetsplatser_med_koordinater = len([ap for ap in arbetsplatser if ap.get('coordinates')])
             st.info(f"Visar {arbetsplatser_med_koordinater} av {total_arbetsplatser} arbetsplatser på kartan")
-        
+
         # Visa kartan med arbetsplatser och ombud
         karta, failed_locations = load_map(arbetsplatser, personer, db)
         folium_static(karta)
@@ -864,7 +868,7 @@ def show(db):
         # Visa eventuella platser som saknar koordinater
         st.markdown("### Arbetsplatser som saknar koordinater")
         saknar_koordinater = [ap['namn'] for ap in arbetsplatser if not ap.get('coordinates')]
-        
+
         if saknar_koordinater:
             col1, col2 = st.columns([1, 4])
             with col1:
@@ -883,7 +887,7 @@ def show(db):
                             st.rerun()
                         else:
                             st.error("❌ Kunde inte generera några koordinater")
-            
+
             with col2:
                 for plats in saknar_koordinater:
                     st.warning(f"⚠️ {plats}")
